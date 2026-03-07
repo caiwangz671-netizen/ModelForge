@@ -1,0 +1,37 @@
+# macOS
+.DS_Store
+.env
+
+# Logs
+logs/*.log
+start-dev.log
+backend/backend.log
+frontend/frontend.log
+
+# Python
+backend/.cache/
+backend/venv/
+backend/build/
+backend/build.bak-*/
+backend/dist/
+backend/dist.bak-*/
+backend/__pycache__/
+backend/ollama_studio.db
+backend/backend-api.spec
+**/__pycache__/
+*.py[cod]
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/dist.bak-*/
+frontend/.vite/
+
+# Desktop
+desktop/node_modules/
+desktop/frontend-dist/
+desktop/backend-bin/
+release/
+
+# Runtime data
+data/
