@@ -195,12 +195,12 @@ async def get_residency():
 async def set_residency(request: ModelResidencyRequest):
     """Set whether a model should stay resident in memory."""
     try:
-        from app.config import PROJECT_ROOT
+        from app.config import resolve_persisted_env_path
         resident_models = model_residency_service.set_resident(
             request.model,
             resident=request.resident,
         )
-        env_path = PROJECT_ROOT / ".env"
+        env_path = resolve_persisted_env_path()
         resident_env_value = ",".join(resident_models) if resident_models else None
         upsert_env_value(env_path, "RESIDENT_MODELS", resident_env_value)
         return {

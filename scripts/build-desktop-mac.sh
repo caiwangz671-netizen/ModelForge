@@ -203,6 +203,7 @@ build_dmg() {
   cp "$DESKTOP_DIR/controlled-browser.js" "$app_payload_dir/controlled-browser.js"
   cp "$DESKTOP_DIR/status-hud.js" "$app_payload_dir/status-hud.js"
   cp "$DESKTOP_DIR/package.json" "$app_payload_dir/package.json"
+  cp -R "$DESKTOP_DIR/platform" "$app_payload_dir/platform"
   cp -R "$FRONTEND_DIR/dist" "$app_payload_dir/frontend-dist"
   cp -R "$BACKEND_DIR/dist/backend-api" "$app_payload_dir/backend-bin"
 

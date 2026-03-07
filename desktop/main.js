@@ -141,7 +141,7 @@ async function isPortBindable(port = Number(BACKEND_PORT), host = '127.0.0.1') {
 
 function spawnDetached(command, args) {
   try {
-    const child = spawn(command, args, { detached: true, stdio: 'ignore' });
+    const child = spawn(command, args, { detached: true, stdio: 'ignore', windowsHide: true });
     child.unref();
     return true;
   } catch (error) {
@@ -153,20 +153,35 @@ function spawnDetached(command, args) {
   }
 }
 
-function tryLaunchOllama() {
-  let launched = false;
+function windowsOllamaLaunchCandidates() {
+  const localAppData = process.env.LOCALAPPDATA || '';
+  const candidates = [];
 
+  if (localAppData) {
+    const installedExe = path.join(localAppData, 'Programs', 'Ollama', 'Ollama.exe');
+    candidates.push(['cmd', ['/c', 'start', '', installedExe]]);
+  }
+
+  candidates.push(['cmd', ['/c', 'start', '', 'ollama', 'app']]);
+  candidates.push(['cmd', ['/c', 'start', '', 'ollama', 'serve']]);
+  return candidates;
+}
+
+function tryLaunchOllama() {
   if (process.platform === 'darwin') {
-    launched = spawnDetached('open', ['-g', '-a', 'Ollama']) || launched;
+    return spawnDetached('open', ['-g', '-a', 'Ollama']);
   }
 
   if (process.platform === 'win32') {
-    launched = spawnDetached('cmd', ['/c', 'start', '', 'ollama', 'serve']) || launched;
-  } else {
-    launched = spawnDetached('ollama', ['serve']) || launched;
+    for (const [command, args] of windowsOllamaLaunchCandidates()) {
+      if (spawnDetached(command, args)) {
+        return true;
+      }
+    }
+    return false;
   }
 
-  return launched;
+  return spawnDetached('ollama', ['serve']);
 }
 
 async function ensureOllamaRunning() {
@@ -274,7 +289,11 @@ async function startBackend() {
 
   const userDataDir = app.getPath('userData');
   const dbPath = path.join(userDataDir, 'ollama_studio.db');
+  const envFilePath = path.join(userDataDir, '.env');
   const computerUseDir = path.join(userDataDir, 'computer-use');
+
+  fs.mkdirSync(userDataDir, { recursive: true });
+  fs.mkdirSync(computerUseDir, { recursive: true });
 
   const env = {
     ...process.env,
@@ -284,7 +303,8 @@ async function startBackend() {
     DEBUG: 'false',
     CORS_ORIGINS: 'null,http://localhost:5173,http://localhost:3000',
     DATABASE_URL: `sqlite+aiosqlite:///${dbPath}`,
-    MODELFORGE_DESKTOP_MODE: 'true',
+    MODELFORGE_STATE_DIR: userDataDir,
+    MODELFORGE_ENV_FILE: envFilePath,
     MODELFORGE_COMPUTER_USE_DIR: computerUseDir,
     MODELFORGE_COMPUTER_HELPER_URL: computerHelper?.url || '',
     MODELFORGE_COMPUTER_HELPER_TOKEN: computerHelper?.token || '',

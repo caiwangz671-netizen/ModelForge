@@ -2,7 +2,6 @@
 
 interface Window {
   desktopInfo?: {
-    platform?: string;
     isDesktop?: boolean;
     pickDirectories?: (options?: { multiple?: boolean }) => Promise<string[]>;
   };

@@ -155,17 +155,19 @@ export function ComputerUse() {
     window.localStorage.setItem(COMPUTER_USE_HISTORY_COLLAPSED_STORAGE_KEY, String(isHistoryCollapsed));
   }, [isHistoryCollapsed]);
 
+  const permissions = statusPayload?.helper?.permissions;
+  const desktopInputReady = Boolean(statusPayload?.desktop_available);
+  const browserAutomationReady = Boolean(statusPayload?.controlled_browser_available);
+  const visualObservationReady = Boolean(selectedModelSupportsVision || statusPayload?.ocr?.available);
+  const perceptionReady = Boolean(visualObservationReady || browserAutomationReady);
+  const permissionReady = !desktopInputReady || Boolean(permissions?.accessibility && permissions?.screen_recording);
   const canStart = Boolean(
-    statusPayload?.desktop_available
-      && (selectedModelSupportsVision || statusPayload?.ocr?.available)
+    (desktopInputReady || browserAutomationReady)
+      && perceptionReady
       && selectedModel
       && goal.trim()
       && !hasActiveSession,
   );
-
-  const permissions = statusPayload?.helper?.permissions;
-  const permissionReady = Boolean(permissions?.accessibility && permissions?.screen_recording);
-  const perceptionReady = Boolean(statusPayload?.ocr?.available || selectedModelSupportsVision);
   const actionCount = currentSession?.actions.length || 0;
   const sessionError = currentSession?.error || error;
   const activeApprovalMode = currentSession?.approval_mode || approvalMode;
@@ -201,27 +203,51 @@ export function ComputerUse() {
       key: 'desktop',
       icon: MonitorSmartphone,
       title: t('computerUse.overviewDesktop'),
-      value: statusPayload?.desktop_mode ? 'Desktop' : 'Browser',
-      hint: statusPayload?.desktop_mode ? activeScopeCwd : t('computerUse.desktopOnlyDescription'),
-      tone: statusPayload?.desktop_mode ? 'emerald' : 'amber',
+      value: desktopInputReady
+        ? t('computerUse.desktopAutomation')
+        : browserAutomationReady
+          ? t('computerUse.webAutomation')
+          : statusPayload?.desktop_mode
+            ? t('computerUse.capabilityUnavailable')
+            : t('computerUse.automationUnavailable'),
+      hint: desktopInputReady
+        ? activeScopeCwd
+        : browserAutomationReady
+          ? t('computerUse.browserOnlyDescription')
+          : t('computerUse.desktopOnlyDescription'),
+      tone: desktopInputReady || browserAutomationReady ? 'emerald' : 'amber',
     },
     {
       key: 'perception',
       icon: FileSearch,
       title: t('computerUse.overviewPerception'),
-      value: selectedModelSupportsVision ? 'Vision' : statusPayload?.ocr.available ? 'OCR' : 'Unavailable',
+      value: selectedModelSupportsVision
+        ? 'Vision'
+        : statusPayload?.ocr.available
+          ? 'OCR'
+          : browserAutomationReady
+            ? t('computerUse.browserStateReady')
+            : t('computerUse.capabilityUnavailable'),
       hint: selectedModelSupportsVision
         ? (selectedModel || t('computerUse.selectModel'))
-        : (statusPayload?.ocr.local_engine_name || statusPayload?.recommended_ocr.name || t('computerUse.ocrRequiredTitle')),
+        : statusPayload?.ocr.available
+          ? (statusPayload?.ocr.local_engine_name || statusPayload?.recommended_ocr.name || t('computerUse.ocrRequiredTitle'))
+          : browserAutomationReady
+            ? t('computerUse.browserStateDescription')
+            : (statusPayload?.recommended_ocr.name || t('computerUse.ocrRequiredTitle')),
       tone: perceptionReady ? 'emerald' : 'amber',
     },
     {
       key: 'permissions',
       icon: ShieldAlert,
       title: t('computerUse.overviewPermissions'),
-      value: permissionReady ? t('computerUse.permissionsGranted') : t('computerUse.permissionsMissing'),
-      hint: `${t('computerUse.screenRecording')} ${permissions?.screen_recording ? '✓' : '✗'} · ${t('computerUse.accessibility')} ${permissions?.accessibility ? '✓' : '✗'}`,
-      tone: permissionReady ? 'emerald' : 'rose',
+      value: desktopInputReady
+        ? (permissionReady ? t('computerUse.permissionsGranted') : t('computerUse.permissionsMissing'))
+        : t('computerUse.permissionsNotRequired'),
+      hint: desktopInputReady
+        ? `${t('computerUse.screenRecording')} ${permissions?.screen_recording ? '✓' : '✗'} · ${t('computerUse.accessibility')} ${permissions?.accessibility ? '✓' : '✗'}`
+        : t('computerUse.permissionsBrowserOnlyHint'),
+      tone: desktopInputReady ? (permissionReady ? 'emerald' : 'rose') : 'neutral',
     },
     {
       key: 'session',
@@ -337,7 +363,11 @@ export function ComputerUse() {
                     )}
                   >
                     <MonitorSmartphone className="h-3.5 w-3.5" />
-                    {statusPayload?.desktop_mode ? 'Desktop' : 'Browser'}
+                    {desktopInputReady
+                      ? t('computerUse.desktopAutomation')
+                      : browserAutomationReady
+                        ? t('computerUse.webAutomation')
+                        : t('computerUse.automationUnavailable')}
                   </Badge>
                   <Badge
                     variant="outline"
@@ -349,19 +379,31 @@ export function ComputerUse() {
                     )}
                   >
                     {perceptionReady ? <CheckCircle2 className="h-3.5 w-3.5" /> : <FileSearch className="h-3.5 w-3.5" />}
-                    {selectedModelSupportsVision ? 'Vision' : statusPayload?.ocr.available ? 'OCR' : 'No OCR'}
+                    {selectedModelSupportsVision
+                      ? 'Vision'
+                      : statusPayload?.ocr.available
+                        ? 'OCR'
+                        : browserAutomationReady
+                          ? t('computerUse.browserStateReady')
+                          : t('computerUse.noPerception')}
                   </Badge>
                   <Badge
                     variant="outline"
                     className={cn(
                       'gap-1.5 rounded-full border px-3 py-1 text-[11px] font-medium shadow-sm',
-                      permissionReady
-                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                        : 'border-rose-200 bg-rose-50 text-rose-700',
+                      desktopInputReady
+                        ? (
+                          permissionReady
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                            : 'border-rose-200 bg-rose-50 text-rose-700'
+                        )
+                        : 'border-slate-200 bg-slate-50 text-slate-700',
                     )}
                   >
                     <ShieldAlert className="h-3.5 w-3.5" />
-                    {permissionReady ? t('computerUse.permissionsGranted') : t('computerUse.permissionsMissing')}
+                    {desktopInputReady
+                      ? (permissionReady ? t('computerUse.permissionsGranted') : t('computerUse.permissionsMissing'))
+                      : t('computerUse.permissionsNotRequired')}
                   </Badge>
                   <Badge
                     variant="outline"
@@ -492,7 +534,7 @@ export function ComputerUse() {
           </div>
         )}
 
-        {statusPayload && !selectedModelSupportsVision && !statusPayload.ocr.available && (
+        {statusPayload && !selectedModelSupportsVision && !statusPayload.ocr.available && !browserAutomationReady && (
           <div className="rounded-[24px] border border-amber-200/80 bg-amber-50/70 px-4 py-4 shadow-sm">
             <div className="flex items-start gap-3">
               <FileSearch className="mt-0.5 h-[18px] w-[18px] shrink-0 text-amber-600" />
@@ -511,7 +553,7 @@ export function ComputerUse() {
           </div>
         )}
 
-        {statusPayload && permissions && !permissionReady && (
+        {statusPayload && permissions && desktopInputReady && !permissionReady && (
           <div className="rounded-[24px] border border-rose-200/80 bg-rose-50/70 px-4 py-4 shadow-sm">
             <div className="flex h-full flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div className="flex items-start gap-3">

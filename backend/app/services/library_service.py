@@ -7,10 +7,11 @@ import json
 import logging
 import re
 import time
-from pathlib import Path
 from typing import Any, Dict, List
 
 import httpx
+
+from app.config import resolve_runtime_state_dir
 
 
 logger = logging.getLogger(__name__)
@@ -47,8 +48,7 @@ class LibraryService:
         self._max_retries = 3
         self._retry_backoff = 0.5
 
-        backend_root = Path(__file__).resolve().parents[2]
-        self._cache_dir = backend_root / ".cache"
+        self._cache_dir = resolve_runtime_state_dir() / ".cache"
         self._cache_path = self._cache_dir / "library_cache.json"
         self._cache_lock = asyncio.Lock()
         self._load_disk_cache()

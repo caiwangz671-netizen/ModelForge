@@ -76,12 +76,16 @@ HANDS_FREE_AUTO_APPROVED_TOOLS = {
     "browser_back",
 }
 RETRYABLE_TOOLS = {
+    "computer_snapshot",
+    "computer_query_state",
     "computer_click",
     "computer_click_box",
     "computer_click_target",
     "computer_keypress",
     "computer_scroll",
+    "computer_open_app",
     "browser_navigate",
+    "browser_query_state",
     "browser_click",
     "browser_type",
     "browser_keypress",
@@ -286,7 +290,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "computer_open_app",
-            "description": "Open a macOS application by name.",
+            "description": "Open a native desktop application by name or executable identifier.",
             "parameters": {
                 "type": "object",
                 "properties": {"app_name": {"type": "string"}},
@@ -448,7 +452,7 @@ TOOL_SCHEMAS = [
 COMPUTER_USE_SYSTEM_PROMPT = (
     "You are in ModelForge Computer Use Beta.\n"
     "Rules:\n"
-    "1. Observe before acting. Your first useful tool call should usually be computer_snapshot.\n"
+    "1. Observe before acting. Your first useful tool call should usually be computer_snapshot or browser_query_state.\n"
     "2. After every state-changing action, re-observe with computer_snapshot, computer_query_state, or browser_query_state.\n"
     "3. Do not claim you saw or clicked something unless a tool confirmed it.\n"
     "4. Prefer small, reversible steps.\n"
@@ -468,6 +472,14 @@ OBSERVATION_ONLY_SYSTEM_NOTE = (
     "You may observe the screen with computer_snapshot, but avoid computer_query_state, "
     "computer_click, computer_type, computer_keypress, and computer_scroll because they will fail.\n"
     "If the user's goal requires interaction, state that accessibility permission must be enabled."
+)
+BROWSER_ONLY_SYSTEM_NOTE = (
+    "Native desktop input control is unavailable in the current runtime, but the controlled browser is available.\n"
+    "For website tasks, prefer browser_navigate, browser_query_state, browser_click, browser_type, "
+    "browser_keypress, browser_scroll, and browser_back.\n"
+    "Avoid computer_query_state, computer_click, computer_type, computer_keypress, and computer_scroll "
+    "unless the user explicitly needs unsupported desktop interaction.\n"
+    "If the user asks for native desktop control outside the browser, explain that webpage automation remains available while native desktop input is not."
 )
 HANDS_FREE_SYSTEM_NOTE = (
     "Hands-free execution is enabled for this session.\n"
@@ -1148,7 +1160,7 @@ class ComputerUseService:
 
     async def get_status(self) -> dict[str, Any]:
         helper_health = await computer_helper_client.health()
-        desktop_mode = os.getenv("MODELFORGE_DESKTOP_MODE", "").strip().lower() == "true"
+        desktop_mode = computer_helper_client.configured
         local_ocr = helper_health.get("ocr") if isinstance(helper_health, dict) else None
         if not isinstance(local_ocr, dict):
             local_ocr = {
@@ -1187,7 +1199,8 @@ class ComputerUseService:
         }
         return {
             "desktop_mode": desktop_mode,
-            "desktop_available": desktop_mode and bool(helper_health.get("ok")),
+            "desktop_available": desktop_mode and bool(helper_health.get("desktop_available")),
+            "snapshot_available": desktop_mode and bool(helper_health.get("snapshot_available")),
             "controlled_browser_available": desktop_mode and bool(helper_health.get("controlled_browser_available", True)),
             "helper": helper_health,
             "ocr": ocr,
@@ -1212,16 +1225,19 @@ class ComputerUseService:
             raise RuntimeError("Model is required")
 
         status_payload = helper_status if isinstance(helper_status, dict) else await self.get_status()
-        if not status_payload.get("desktop_available"):
-            raise RuntimeError("Computer helper is unavailable; desktop mode is required")
+        if not status_payload.get("desktop_available") and not status_payload.get("controlled_browser_available"):
+            raise RuntimeError("Computer helper is unavailable; desktop automation or controlled browser mode is required")
 
         official_caps = await ollama_service.get_model_capabilities(normalized_model)
         if "tools" not in official_caps:
             raise RuntimeError("Selected model does not declare tools capability in Ollama")
-        if "vision" not in official_caps and not status_payload.get("ocr", {}).get("available"):
+        has_perception_fallback = bool(status_payload.get("ocr", {}).get("available"))
+        has_browser_observation = bool(status_payload.get("controlled_browser_available"))
+        if "vision" not in official_caps and not has_perception_fallback and not has_browser_observation:
             raise RuntimeError(
-                "Selected model does not support vision, and no OCR fallback is available. "
-                f"Install an Ollama OCR model (recommended: {RECOMMENDED_OCR_MODEL}) or install Tesseract OCR."
+                "Selected model does not support vision, and neither OCR nor controlled browser observation is available. "
+                f"Install an Ollama OCR model (recommended: {RECOMMENDED_OCR_MODEL}), install Tesseract OCR, "
+                "or run inside the desktop app with controlled browser support."
             )
         return official_caps
 
@@ -1872,6 +1888,21 @@ class ComputerUseService:
         if tool_name not in ACCESSIBILITY_REQUIRED_TOOLS:
             return None
         health = await computer_helper_client.health()
+        if isinstance(health, dict) and health.get("desktop_available") is False:
+            limitations = health.get("limitations")
+            limitation_note = ""
+            if isinstance(limitations, list):
+                limitation_note = next(
+                    (
+                        str(item).strip()
+                        for item in limitations
+                        if isinstance(item, str) and str(item).strip()
+                    ),
+                    "",
+                )
+            if limitation_note:
+                return limitation_note
+            return "Desktop input control is unavailable on this platform right now"
         permissions = health.get("permissions") if isinstance(health, dict) else None
         if isinstance(permissions, dict) and permissions.get("accessibility") is False:
             return "Accessibility permission is required for this desktop action"
@@ -2427,6 +2458,14 @@ class ComputerUseService:
                 *(
                     [{"role": "system", "content": HANDS_FREE_SYSTEM_NOTE}]
                     if _is_hands_free_mode(session.get("approval_mode"))
+                    else []
+                ),
+                *(
+                    [{"role": "system", "content": BROWSER_ONLY_SYSTEM_NOTE}]
+                    if (
+                        helper_status.get("controlled_browser_available")
+                        and not helper_status.get("desktop_available")
+                    )
                     else []
                 ),
                 *(

@@ -5,7 +5,7 @@ const http = require('http');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
-const { screen, shell, systemPreferences } = require('electron');
+const { desktopCapturer, screen, shell, systemPreferences } = require('electron');
 const {
   closeControlledBrowser,
   clickControlledBrowserElement,
@@ -22,6 +22,7 @@ const {
   showStatusHud,
   updateStatusHud,
 } = require('./status-hud');
+const { createDesktopDriver } = require('./platform');
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -105,31 +106,6 @@ async function commandAvailable(command, args = ['--version']) {
     return result.code === 0;
   } catch {
     return false;
-  }
-}
-
-async function probeAccessibility() {
-  try {
-    return Boolean(systemPreferences.isTrustedAccessibilityClient(false));
-  } catch {
-    return false;
-  }
-}
-
-async function probeScreenRecording() {
-  try {
-    const status = systemPreferences.getMediaAccessStatus('screen');
-    return status === 'granted';
-  } catch {
-    const tempFile = path.join(os.tmpdir(), `modelforge-screen-probe-${Date.now()}.png`);
-    try {
-      const result = await runCommand('screencapture', ['-x', '-t', 'png', tempFile], { timeoutMs: 5000 });
-      return result.code === 0 && fs.existsSync(tempFile);
-    } catch {
-      return false;
-    } finally {
-      fs.rmSync(tempFile, { force: true });
-    }
   }
 }
 
@@ -228,304 +204,129 @@ async function withMainWindowTemporarilyHidden(options, operation) {
   }
 }
 
-async function captureSnapshot(filePath, includeOcr, options = {}) {
+async function captureDesktopImageToFile(filePath, options = {}) {
   return await withMainWindowTemporarilyHidden(options, async () => {
     await fsp.mkdir(path.dirname(filePath), { recursive: true });
-    const capture = await runCommand('screencapture', ['-x', '-t', 'png', filePath], { timeoutMs: 10000 });
-    if (capture.code !== 0) {
-      return { ok: false, error: capture.stderr.trim() || 'Failed to capture screenshot' };
+
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const bounds = primaryDisplay?.bounds || {};
+    const size = primaryDisplay?.size || {};
+    const scaleFactor = Number(primaryDisplay?.scaleFactor || 1) || 1;
+    const targetWidth = Math.max(
+      1,
+      Math.round((Number(size.width || bounds.width || 0) || 1) * scaleFactor),
+    );
+    const targetHeight = Math.max(
+      1,
+      Math.round((Number(size.height || bounds.height || 0) || 1) * scaleFactor),
+    );
+
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: {
+        width: targetWidth,
+        height: targetHeight,
+      },
+      fetchWindowIcons: false,
+    });
+
+    const primaryDisplayId = String(primaryDisplay?.id ?? '');
+    const selectedSource = sources.find((source) => String(source.display_id || '') === primaryDisplayId)
+      || sources[0];
+
+    if (!selectedSource || !selectedSource.thumbnail || selectedSource.thumbnail.isEmpty()) {
+      return { ok: false, error: 'Failed to capture screenshot' };
     }
 
-    let width = null;
-    let height = null;
-    try {
-      const sizeResult = await runCommand('sips', ['-g', 'pixelWidth', '-g', 'pixelHeight', filePath], { timeoutMs: 5000 });
-      const widthMatch = sizeResult.stdout.match(/pixelWidth:\s+(\d+)/);
-      const heightMatch = sizeResult.stdout.match(/pixelHeight:\s+(\d+)/);
-      width = widthMatch ? Number(widthMatch[1]) : null;
-      height = heightMatch ? Number(heightMatch[1]) : null;
-    } catch {
-      width = null;
-      height = null;
-    }
+    const pngBuffer = selectedSource.thumbnail.toPNG();
+    await fsp.writeFile(filePath, pngBuffer);
 
-    let ocrText = '';
-    const ocrAvailable = await commandAvailable('tesseract');
-    if (includeOcr && ocrAvailable) {
-      try {
-        const ocrResult = await runCommand('tesseract', [filePath, 'stdout', '--psm', '6'], { timeoutMs: 20000 });
-        if (ocrResult.code === 0) {
-          ocrText = ocrResult.stdout.trim();
-        }
-      } catch {
-        ocrText = '';
-      }
-    }
+    const imageSize = typeof selectedSource.thumbnail.getSize === 'function'
+      ? selectedSource.thumbnail.getSize()
+      : { width: targetWidth, height: targetHeight };
 
     return {
       ok: true,
       file_path: filePath,
-      width,
-      height,
-      coordinate_space: getDisplayCoordinateSpace(width, height),
-      ocr_text: ocrText,
-      summary: ocrText ? ocrText.slice(0, 800) : 'Screenshot captured',
+      width: Number(imageSize.width || targetWidth),
+      height: Number(imageSize.height || targetHeight),
+      coordinate_space: getDisplayCoordinateSpace(imageSize.width, imageSize.height),
+      summary: 'Screenshot captured',
       app_window_hidden_during_capture: true,
+      source_id: selectedSource.id,
+      display_id: selectedSource.display_id || primaryDisplayId,
     };
   });
+}
+
+const desktopDriver = createDesktopDriver({
+  fs,
+  fsp,
+  os,
+  path,
+  screen,
+  shell,
+  systemPreferences,
+  captureDesktopImageToFile,
+  commandAvailable,
+  getDisplayCoordinateSpace,
+  runCommand,
+  runOsaJavaScript,
+  scaleCoordinateToDisplay,
+  withMainWindowTemporarilyHidden,
+});
+
+async function captureSnapshot(filePath, includeOcr, options = {}) {
+  return desktopDriver.captureSnapshot(filePath, includeOcr, options);
 }
 
 async function queryState(options = {}) {
-  return await withMainWindowTemporarilyHidden(options, async () => {
-    try {
-      const accessibilityTrusted = await probeAccessibility();
-      if (!accessibilityTrusted) {
-        return {
-          ok: false,
-          error: 'Accessibility permission is required to read UI state',
-          focused: {
-            role: '',
-            title: '',
-            description: '',
-            placeholder: '',
-            value: '',
-          },
-        };
-      }
-      const result = await runOsaJavaScript(`
-        const se = Application('System Events');
-        const proc = se.applicationProcesses.whose({ frontmost: true })[0];
-        let appName = '';
-        let windowTitle = '';
-        try { appName = proc.name(); } catch (e) {}
-        try { windowTitle = proc.windows[0].name(); } catch (e) {}
-        console.log(JSON.stringify({
-          ok: true,
-          frontmost_app: appName,
-          window_title: windowTitle,
-          focused: {
-            role: '',
-            title: '',
-            description: '',
-            placeholder: '',
-            value: ''
-          }
-        }));
-      `);
-      if (result.code !== 0) {
-        return { ok: false, error: result.stderr.trim() || 'Failed to read UI state' };
-      }
-      const output = String(result.stdout || result.stderr || '').trim();
-      if (!output) {
-        return { ok: false, error: 'UI state script returned no output' };
-      }
-      const parsed = JSON.parse(output);
-      if (!parsed || typeof parsed !== 'object') {
-        return { ok: false, error: 'UI state script returned invalid JSON' };
-      }
-      if (parsed.ok !== true) {
-        return {
-          ok: false,
-          error: typeof parsed.error === 'string' && parsed.error.trim()
-            ? parsed.error
-            : 'Failed to read UI state',
-        };
-      }
-      return parsed;
-    } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : String(error) };
-    }
-  });
+  return desktopDriver.queryState(options);
 }
 
 async function postMouseClick(x, y, coordinateSpace = {}, options = {}) {
-  return await withMainWindowTemporarilyHidden(options, async () => {
-    const resolvedSpace = {
-      ...getDisplayCoordinateSpace(),
-      ...(coordinateSpace && typeof coordinateSpace === 'object' ? coordinateSpace : {}),
-    };
-    const resolvedPoint = scaleCoordinateToDisplay(x, y, resolvedSpace);
-    const result = await runOsaJavaScript(`
-      ObjC.import('ApplicationServices');
-      const point = $.CGPointMake(${Number(resolvedPoint.actual_x)}, ${Number(resolvedPoint.actual_y)});
-      const down = $.CGEventCreateMouseEvent(null, $.kCGEventLeftMouseDown, point, $.kCGMouseButtonLeft);
-      const up = $.CGEventCreateMouseEvent(null, $.kCGEventLeftMouseUp, point, $.kCGMouseButtonLeft);
-      $.CGEventPost($.kCGHIDEventTap, down);
-      $.CGEventPost($.kCGHIDEventTap, up);
-      console.log('ok');
-    `);
-    return {
-      ok: result.code === 0,
-      x: resolvedPoint.actual_x,
-      y: resolvedPoint.actual_y,
-      requested_x: resolvedPoint.requested_x,
-      requested_y: resolvedPoint.requested_y,
-      coordinate_space: resolvedSpace,
-      coordinate_scale: {
-        x: resolvedPoint.scale_x,
-        y: resolvedPoint.scale_y,
-      },
-      error: result.code === 0 ? null : (result.stderr.trim() || 'Failed to click'),
-    };
-  });
+  return desktopDriver.postMouseClick(x, y, coordinateSpace, options);
 }
 
 async function postScroll(deltaX, deltaY, options = {}) {
-  return await withMainWindowTemporarilyHidden(options, async () => {
-    const result = await runOsaJavaScript(`
-      ObjC.import('ApplicationServices');
-      const event = $.CGEventCreateScrollWheelEvent(
-        null,
-        $.kCGScrollEventUnitLine,
-        2,
-        ${Number(deltaY)},
-        ${Number(deltaX)}
-      );
-      $.CGEventPost($.kCGHIDEventTap, event);
-      console.log('ok');
-    `);
-    return {
-      ok: result.code === 0,
-      delta_x: deltaX,
-      delta_y: deltaY,
-      error: result.code === 0 ? null : (result.stderr.trim() || 'Failed to scroll'),
-    };
-  });
+  return desktopDriver.postScroll(deltaX, deltaY, options);
 }
 
 async function postType(text, options = {}) {
-  return await withMainWindowTemporarilyHidden(options, async () => {
-    const result = await runOsaJavaScript(`
-      const se = Application('System Events');
-      se.keystroke(${JSON.stringify(String(text))});
-      console.log('ok');
-    `);
-    return {
-      ok: result.code === 0,
-      text_length: String(text).length,
-      error: result.code === 0 ? null : (result.stderr.trim() || 'Failed to type text'),
-    };
-  });
+  return desktopDriver.postType(text, options);
 }
 
 async function postKeypress(key, modifiers, options = {}) {
-  return await withMainWindowTemporarilyHidden(options, async () => {
-    const modifierTokens = Array.isArray(modifiers)
-      ? modifiers
-        .map((value) => String(value).trim().toLowerCase())
-        .filter(Boolean)
-        .map((value) => {
-          if (value === 'cmd' || value === 'command') return 'command down';
-          if (value === 'ctrl' || value === 'control') return 'control down';
-          if (value === 'alt' || value === 'option') return 'option down';
-          if (value === 'shift') return 'shift down';
-          return null;
-        })
-        .filter(Boolean)
-      : [];
-    const result = await runOsaJavaScript(`
-      const se = Application('System Events');
-      const key = ${JSON.stringify(String(key || '').toLowerCase())};
-      const modifiers = ${JSON.stringify(modifierTokens)};
-      const keyCodes = {
-        enter: 36,
-        return: 36,
-        tab: 48,
-        space: 49,
-        escape: 53,
-        esc: 53,
-        left: 123,
-        right: 124,
-        down: 125,
-        up: 126,
-        delete: 51,
-        backspace: 51
-      };
-      if (Object.prototype.hasOwnProperty.call(keyCodes, key)) {
-        se.keyCode(keyCodes[key], { using: modifiers });
-      } else {
-        se.keystroke(key, { using: modifiers });
-      }
-      console.log('ok');
-    `);
-    return {
-      ok: result.code === 0,
-      key,
-      modifiers: modifierTokens,
-      error: result.code === 0 ? null : (result.stderr.trim() || 'Failed to press key'),
-    };
-  });
+  return desktopDriver.postKeypress(key, modifiers, options);
 }
 
 async function openUrl(url) {
-  const result = await runCommand('open', [url], { timeoutMs: 10000 });
-  return {
-    ok: result.code === 0,
-    url,
-    error: result.code === 0 ? null : (result.stderr.trim() || 'Failed to open URL'),
-  };
+  try {
+    await shell.openExternal(url);
+    return {
+      ok: true,
+      url,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      url,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 async function openApp(appName) {
-  const result = await runCommand('open', ['-a', appName], { timeoutMs: 10000 });
-  return {
-    ok: result.code === 0,
-    app_name: appName,
-    error: result.code === 0 ? null : (result.stderr.trim() || 'Failed to open application'),
-  };
+  return desktopDriver.openApp(appName);
 }
 
 async function createHealthPayload() {
-  const [ocrAvailable, accessibilityTrusted, screenRecordingAvailable] = await Promise.all([
-    commandAvailable('tesseract'),
-    probeAccessibility(),
-    probeScreenRecording(),
-  ]);
-  return {
-    ok: true,
-    desktop_available: true,
-    controlled_browser_available: true,
-    coordinate_space: getDisplayCoordinateSpace(),
-    ocr: {
-      available: ocrAvailable,
-      recommended: 'Tesseract OCR',
-      install_hint: 'brew install tesseract',
-    },
-    permissions: {
-      accessibility: accessibilityTrusted,
-      screen_recording: screenRecordingAvailable,
-    },
-  };
+  return desktopDriver.createHealthPayload();
 }
 
 async function requestPermissions() {
-  // Accessibility: passing true opens System Preferences if not already trusted.
-  try {
-    systemPreferences.isTrustedAccessibilityClient(true);
-  } catch {
-    // Non-macOS or API unavailable — ignore.
-  }
-
-  // Screen Recording: must be granted manually; open the system pane directly.
-  try {
-    await shell.openExternal(
-      'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
-    );
-  } catch {
-    // Fallback: open the top-level Privacy & Security pane.
-    try {
-      await shell.openExternal('x-apple.systempreferences:com.apple.preference.security');
-    } catch {
-      // Ignore on non-macOS.
-    }
-  }
-
-  // Re-probe and return fresh permission state.
-  const [accessibility, screen_recording] = await Promise.all([
-    probeAccessibility(),
-    probeScreenRecording(),
-  ]);
-  return { ok: true, permissions: { accessibility, screen_recording } };
+  return desktopDriver.requestPermissions();
 }
 
 async function hideMainWindow(options = {}) {

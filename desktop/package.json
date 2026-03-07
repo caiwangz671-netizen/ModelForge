@@ -6,7 +6,47 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "package:mac": "electron-packager . ModelForge --platform=darwin --arch=arm64 --out ../release --overwrite --prune=true --app-bundle-id com.modelforge.desktop --ignore=\"^/release/\""
+    "package:mac": "electron-packager . ModelForge --platform=darwin --arch=arm64 --out ../release --overwrite --prune=true --app-bundle-id com.modelforge.desktop --ignore=\"^/release/\"",
+    "package:win": "npx electron-builder@26.0.12 --win --x64 --publish never",
+    "package:win:portable": "npx electron-builder@26.0.12 --win portable --x64 --publish never",
+    "package:win:installer": "npx electron-builder@26.0.12 --win nsis --x64 --publish never"
+  },
+  "build": {
+    "appId": "com.modelforge.desktop",
+    "productName": "ModelForge",
+    "asar": true,
+    "directories": {
+      "output": "../release"
+    },
+    "files": [
+      "**/*",
+      "!frontend-dist",
+      "!frontend-dist/**",
+      "!backend-bin",
+      "!backend-bin/**"
+    ],
+    "extraResources": [
+      {
+        "from": "frontend-dist",
+        "to": "app/frontend-dist"
+      },
+      {
+        "from": "backend-bin",
+        "to": "app/backend-bin"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "artifactName": "${productName}-${version}-${arch}-${target}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
   },
   "devDependencies": {
     "@electron/packager": "^18.4.4",

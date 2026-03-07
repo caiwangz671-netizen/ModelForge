@@ -1,12 +1,39 @@
 """Application configuration"""
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _resolve_runtime_state_dir() -> Path:
+    raw = os.getenv("MODELFORGE_STATE_DIR", "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return PROJECT_ROOT
+
+
+def _resolve_runtime_env_file() -> Path:
+    raw = os.getenv("MODELFORGE_ENV_FILE", "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return (_resolve_runtime_state_dir() / ".env").resolve()
+
+
+RUNTIME_STATE_DIR = _resolve_runtime_state_dir()
+RUNTIME_ENV_FILE = _resolve_runtime_env_file()
+
+
+def resolve_runtime_state_dir() -> Path:
+    return RUNTIME_STATE_DIR
+
+
+def resolve_persisted_env_path() -> Path:
+    return RUNTIME_ENV_FILE
 
 
 class Settings(BaseSettings):
@@ -16,7 +43,7 @@ class Settings(BaseSettings):
     ollama_host: str = "http://localhost:11434"
     
     # Database settings
-    database_url: str = "sqlite+aiosqlite:///./ollama_studio.db"
+    database_url: str = Field(default_factory=lambda: str((RUNTIME_STATE_DIR / "ollama_studio.db").resolve()))
     
     # API settings
     api_prefix: str = "/api"
@@ -33,7 +60,7 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
 
     model_config = SettingsConfigDict(
-        env_file=str(PROJECT_ROOT / ".env"),
+        env_file=str(RUNTIME_ENV_FILE),
         env_file_encoding="utf-8",
         extra="ignore",
     )

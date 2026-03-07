@@ -2,6 +2,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
+import json
 
 from app.services.ollama import ollama_service
 from app.services.memory_service import memory_service
@@ -82,9 +83,9 @@ async def get_settings():
 @router.put("/settings")
 async def update_settings(request: SettingsUpdate):
     """Update system settings"""
-    from app.config import get_settings, PROJECT_ROOT
+    from app.config import get_settings, resolve_persisted_env_path
     settings = get_settings()
-    env_path = PROJECT_ROOT / ".env"
+    env_path = resolve_persisted_env_path()
 
     if request.ollama_host:
         ollama_service.base_url = request.ollama_host
@@ -206,6 +207,49 @@ async def get_hardware_info():
         except Exception:
             return None
 
+    def _windows_gpu_info() -> tuple[str | None, int | None]:
+        """
+        Query Windows GPU info through PowerShell CIM when available.
+        """
+        try:
+            result = subprocess.run(
+                [
+                    "powershell.exe",
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    (
+                        "Get-CimInstance Win32_VideoController | "
+                        "Select-Object -Property Name,AdapterRAM | "
+                        "ConvertTo-Json -Compress"
+                    ),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode != 0 or not result.stdout.strip():
+                return None, None
+            payload = json.loads(result.stdout)
+            items = payload if isinstance(payload, list) else [payload]
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("Name") or "").strip()
+                raw_ram = item.get("AdapterRAM")
+                adapter_ram = None
+                try:
+                    if raw_ram is not None and str(raw_ram).strip():
+                        adapter_ram = int(raw_ram)
+                except Exception:
+                    adapter_ram = None
+                if name:
+                    return name, adapter_ram
+        except Exception:
+            return None, None
+        return None, None
+
     # Try NVIDIA GPU
     try:
         result = subprocess.run(
@@ -257,6 +301,13 @@ async def get_hardware_info():
                         gpu_vram_bytes = vm_total
             except Exception:
                 pass
+
+    if platform.system() == "Windows" and gpu_info is None:
+        detected_gpu, detected_vram = _windows_gpu_info()
+        if detected_gpu:
+            gpu_info = detected_gpu
+        if detected_vram and detected_vram > 0:
+            gpu_vram_bytes = detected_vram
 
     return {
         "ram_total": vm_total,

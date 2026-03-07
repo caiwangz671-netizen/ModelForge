@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlparse
 
-from app.config import get_settings
+from app.config import get_settings, resolve_runtime_state_dir
 
 
 def _resolve_database_path() -> str:
@@ -16,16 +16,16 @@ def _resolve_database_path() -> str:
     """
     settings = get_settings()
     raw = (settings.database_url or "").strip()
-    backend_dir = Path(__file__).resolve().parents[2]
+    runtime_state_dir = resolve_runtime_state_dir()
 
     if not raw:
-        return str((backend_dir / "ollama_studio.db").resolve())
+        return str((runtime_state_dir / "ollama_studio.db").resolve())
 
     # Accept plain sqlite file path
     if "://" not in raw:
         path = Path(raw)
         if not path.is_absolute():
-            path = backend_dir / path
+            path = runtime_state_dir / path
         return str(path.resolve())
 
     parsed = urlparse(raw)
@@ -38,7 +38,7 @@ def _resolve_database_path() -> str:
         db_path = db_path[1:]
     path = Path(db_path)
     if not path.is_absolute():
-        path = backend_dir / path
+        path = runtime_state_dir / path
     return str(path.resolve())
 
 

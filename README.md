@@ -2,7 +2,7 @@
 
 [中文文档](./README.zh-CN.md) | [Release Checklist](./docs/RELEASE_CHECKLIST.md)
 
-ModelForge is a local AI workstation built around Ollama. It combines model management, chat, download management, memory, and desktop automation in a single project. The repository includes a React frontend, a FastAPI backend, and a macOS Electron desktop wrapper.
+ModelForge is a local AI workstation built around Ollama. It combines model management, chat, download management, memory, and desktop automation in a single project. The repository includes a React frontend, a FastAPI backend, and an Electron desktop wrapper for macOS and Windows.
 
 ## Overview
 
@@ -13,7 +13,7 @@ ModelForge is designed for a practical local workflow:
 - chat with multiple conversations and streaming responses
 - store and search memory entries
 - run desktop tasks with `Computer Use`
-- package everything into a macOS desktop app
+- package everything into a desktop app for macOS and Windows
 
 This repository is the standalone `ModelForge` source tree.
 
@@ -63,6 +63,7 @@ This repository is the standalone `ModelForge` source tree.
 
 - build `ModelForge.app`
 - generate a macOS DMG
+- generate a Windows desktop bundle
 - bundle the frontend, backend binary, and Electron shell together
 
 ## Architecture
@@ -101,7 +102,7 @@ project-root/
 
 ## Requirements
 
-- macOS for the desktop application and desktop automation flow
+- macOS or Windows for the desktop application
 - Node.js 18+
 - Python 3.11+
 - Ollama installed and reachable, usually at `http://localhost:11434`
@@ -207,12 +208,13 @@ Current capabilities include:
 - user takeover for login, CAPTCHA, payment, or other sensitive flows
 - pause, resume, reject, retry, and cancel flows
 
-On macOS, the desktop flow usually requires:
+Platform notes:
 
-- Screen Recording permission
-- Accessibility permission
+- macOS uses Screen Recording and Accessibility permissions for native desktop automation.
+- Windows uses PowerShell plus Win32 APIs for native desktop input and does not require a separate permission grant flow.
+- Both platforms share the same screenshot, OCR, and controlled-browser task loop.
 
-The app surfaces shortcuts to the relevant system settings when these permissions are missing.
+The app only surfaces permission shortcuts when the current runtime actually needs them.
 
 ## API Surface
 
@@ -264,9 +266,17 @@ rm -f backend/ollama_studio.db
 
 This removes local chat history, downloads, memory entries, and `Computer Use` session state.
 
+Packaged desktop builds keep writable state outside the app bundle:
+
+- the desktop app passes a per-user state directory to the backend
+- SQLite data, persisted settings, `Computer Use` artifacts, and library cache are stored there
+- this avoids write failures when the app is installed under `/Applications` on macOS or `Program Files` on Windows
+
 ## Desktop Packaging
 
-The project ships with a macOS packaging script:
+The project ships with separate desktop packaging scripts for macOS and Windows.
+
+### macOS
 
 ```bash
 cd /path/to/project-root
@@ -283,6 +293,36 @@ The script performs the following steps:
 5. produce `release/ModelForge.app`
 6. produce a DMG in `release/`
 
+### Windows
+
+Run the PowerShell build script on a Windows machine:
+
+```powershell
+cd C:\path\to\project-root
+powershell -ExecutionPolicy Bypass -File .\scripts\build-desktop-win.ps1
+```
+
+The Windows script:
+
+1. cleans previous outputs
+2. builds `frontend/dist`
+3. packages the backend with PyInstaller into `backend-api.exe`
+4. stages the desktop payload inside `desktop/`
+5. builds the unpacked Windows desktop app
+6. produces distributable EXE artifacts in `release/`
+
+Expected Windows release outputs:
+
+- `release/win-unpacked/`
+- `release/ModelForge-<version>-x64-portable.exe`
+- `release/ModelForge-<version>-x64-nsis.exe`
+
+For local Windows development, use:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start-dev-win.ps1
+```
+
 Useful packaging environment variables:
 
 ```bash
@@ -290,6 +330,14 @@ SKIP_DEP_INSTALL=true
 BACKEND_PORT=18000
 APP_BUNDLE_ID=io.modelforge.desktop
 ELECTRON_DOWNLOAD_URL=https://cdn.npmmirror.com/binaries/electron/...
+```
+
+Windows script parameters:
+
+```powershell
+.\scripts\build-desktop-win.ps1 -ElectronArch x64
+.\scripts\build-desktop-win.ps1 -SkipDepInstall
+.\scripts\build-desktop-win.ps1 -BackendPort 18000
 ```
 
 If your shell exports `ELECTRON_RUN_AS_NODE=1`, launch the app without that variable:
@@ -303,9 +351,9 @@ env -u ELECTRON_RUN_AS_NODE open /absolute/path/to/ModelForge.app
 Before a release:
 
 1. run the build checks
-2. package the desktop app
-3. verify macOS permissions for `Computer Use`
-4. smoke-test chat, downloads, and desktop automation
+2. package the desktop app on each target OS
+3. verify macOS permissions or Windows PowerShell availability for `Computer Use`
+4. smoke-test chat, downloads, controlled browser, and desktop automation
 5. review staged files and ignore rules
 
 See [Release Checklist](./docs/RELEASE_CHECKLIST.md) for the concrete steps used in this repository.

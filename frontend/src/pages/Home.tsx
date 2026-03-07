@@ -40,6 +40,8 @@ type SystemHealthPayload = {
 
 type ComputerUseStatusPayload = {
   desktop_mode?: boolean;
+  desktop_available?: boolean;
+  controlled_browser_available?: boolean;
   ocr?: {
     available?: boolean;
     recommended?: string;
@@ -148,9 +150,12 @@ export function Home() {
   const ollamaStatus = String(health?.ollama?.status || '').toLowerCase();
   const ollamaHealthy = ollamaStatus.startsWith('healthy');
   const backendHealthy = Boolean(health?.status) && String(health?.status).toLowerCase() === 'healthy';
-  const ocrMissing = Boolean(computerUseStatus?.desktop_mode) && computerUseStatus?.ocr?.available === false && !hasVisionToolModel;
+  const ocrMissing = Boolean(computerUseStatus?.desktop_mode)
+    && !computerUseStatus?.controlled_browser_available
+    && computerUseStatus?.ocr?.available === false
+    && !hasVisionToolModel;
   const permissions = computerUseStatus?.helper?.permissions;
-  const desktopPermissionMissing = Boolean(computerUseStatus?.desktop_mode) && Boolean(
+  const desktopPermissionMissing = Boolean(computerUseStatus?.desktop_available) && Boolean(
     permissions && (!permissions.accessibility || !permissions.screen_recording),
   );
 

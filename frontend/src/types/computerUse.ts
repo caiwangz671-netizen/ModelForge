@@ -85,11 +85,15 @@ export interface ComputerUseSessionListItem {
 export interface ComputerUseStatusPayload {
   desktop_mode: boolean;
   desktop_available: boolean;
+  snapshot_available?: boolean;
   controlled_browser_available?: boolean;
   helper: {
     ok?: boolean;
     error?: string;
     desktop_available?: boolean;
+    snapshot_available?: boolean;
+    controlled_browser_available?: boolean;
+    limitations?: string[];
     permissions?: {
       accessibility?: boolean;
       screen_recording?: boolean;
