@@ -2,6 +2,22 @@
 
 [中文文档](./README.zh-CN.md) | [Release Checklist](./docs/RELEASE_CHECKLIST.md)
 
+<p align="center">
+  <img src="https://img.shields.io/github/v/release/caiwangz671-netizen/ModelForge?style=for-the-badge" alt="Latest Release" />
+  <img src="https://img.shields.io/github/license/caiwangz671-netizen/ModelForge?style=for-the-badge" alt="License" />
+  <img src="https://img.shields.io/badge/macOS-supported-111827?style=for-the-badge&logo=apple&logoColor=white" alt="macOS Supported" />
+  <img src="https://img.shields.io/badge/Windows-supported-2563eb?style=for-the-badge&logo=windows&logoColor=white" alt="Windows Supported" />
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/React-19-149eca?style=for-the-badge&logo=react&logoColor=white" alt="React 19" />
+  <img src="https://img.shields.io/badge/TypeScript-5-3178c6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript 5" />
+  <img src="https://img.shields.io/badge/Tailwind_CSS-4-06b6d4?style=for-the-badge&logo=tailwindcss&logoColor=white" alt="Tailwind CSS 4" />
+  <img src="https://img.shields.io/badge/FastAPI-backend-059669?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI Backend" />
+  <img src="https://img.shields.io/badge/Electron-desktop-1f2937?style=for-the-badge&logo=electron&logoColor=9feaf9" alt="Electron Desktop" />
+  <img src="https://img.shields.io/badge/Ollama-local%20AI-111827?style=for-the-badge" alt="Ollama Local AI" />
+</p>
+
 ModelForge is a local AI workstation built around Ollama. It combines model management, chat, download management, memory, and desktop automation in a single project. The repository includes a React frontend, a FastAPI backend, and an Electron desktop wrapper for macOS and Windows.
 
 ## Overview

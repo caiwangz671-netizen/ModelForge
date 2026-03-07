@@ -2,6 +2,22 @@
 
 [English README](./README.md) | [发布检查清单](./docs/RELEASE_CHECKLIST.md)
 
+<p align="center">
+  <img src="https://img.shields.io/github/v/release/caiwangz671-netizen/ModelForge?style=for-the-badge" alt="最新版本" />
+  <img src="https://img.shields.io/github/license/caiwangz671-netizen/ModelForge?style=for-the-badge" alt="许可证" />
+  <img src="https://img.shields.io/badge/macOS-supported-111827?style=for-the-badge&logo=apple&logoColor=white" alt="支持 macOS" />
+  <img src="https://img.shields.io/badge/Windows-supported-2563eb?style=for-the-badge&logo=windows&logoColor=white" alt="支持 Windows" />
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/React-19-149eca?style=for-the-badge&logo=react&logoColor=white" alt="React 19" />
+  <img src="https://img.shields.io/badge/TypeScript-5-3178c6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript 5" />
+  <img src="https://img.shields.io/badge/Tailwind_CSS-4-06b6d4?style=for-the-badge&logo=tailwindcss&logoColor=white" alt="Tailwind CSS 4" />
+  <img src="https://img.shields.io/badge/FastAPI-backend-059669?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI 后端" />
+  <img src="https://img.shields.io/badge/Electron-desktop-1f2937?style=for-the-badge&logo=electron&logoColor=9feaf9" alt="Electron 桌面层" />
+  <img src="https://img.shields.io/badge/Ollama-local%20AI-111827?style=for-the-badge" alt="Ollama 本地 AI" />
+</p>
+
 ModelForge 是一套围绕 Ollama 构建的本地 AI 工作台，目标不是只做一个聊天壳，而是把模型管理、下载、记忆、桌面自动化和桌面封装整合到同一套产品里。项目当前由 React 前端、FastAPI 后端和面向 macOS、Windows 的 Electron 桌面层组成。
 
 这个目录就是独立的 `ModelForge` 仓库本体，可直接用于开发、打包和发布。
