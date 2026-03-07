@@ -25,7 +25,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="ModelForge API",
     description="API for ModelForge - A web UI for managing Ollama models",
-    version="1.0.0",
+    version="1.1.0",
     lifespan=lifespan
 )
 
@@ -52,7 +52,7 @@ app.include_router(computer_use.router, prefix="/api/computer-use", tags=["compu
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint"""
-    return {"status": "healthy", "version": "1.0.0"}
+    return {"status": "healthy", "version": "1.1.0"}
 
 
 if __name__ == "__main__":
