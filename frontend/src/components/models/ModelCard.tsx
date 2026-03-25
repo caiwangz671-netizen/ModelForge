@@ -108,6 +108,11 @@ export function ModelCard({
                                         Reasoning
                                     </Badge>
                                 )}
+                                {model.capabilities?.supports_video && (
+                                    <Badge variant="secondary" className="text-[10px] h-5 px-2 bg-sky-500/10 text-sky-700 dark:text-sky-300">
+                                        Video
+                                    </Badge>
+                                )}
                                 {model.capabilities?.supports_vision && (
                                     <Badge variant="secondary" className="text-[10px] h-5 px-2 bg-violet-500/10 text-violet-700 dark:text-violet-300">
                                         Vision

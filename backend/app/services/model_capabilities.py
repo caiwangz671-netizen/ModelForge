@@ -6,6 +6,8 @@ from typing import Dict, List, Optional, Set
 from dataclasses import dataclass
 import re
 
+from app.utils.model_names import normalize_model_name, base_model_name
+
 
 @dataclass
 class ModelCapabilities:
@@ -17,6 +19,7 @@ class ModelCapabilities:
     
     # Capabilities
     supports_reasoning: bool = False
+    supports_video: bool = False
     supports_vision: bool = False
     supports_ocr: bool = False
     supports_tools: bool = False
@@ -82,6 +85,10 @@ class ModelCapabilityService:
     OCR_KEYWORDS: Set[str] = {
         'ocr', 'olmocr', 'glmocr', 'gotocr',
     }
+
+    VIDEO_KEYWORDS: Set[str] = {
+        'video', 'video_input', 'video-input', 'video-capable',
+    }
     
     TOOL_SUPPORTED_MODELS: Set[str] = {
         'gpt-oss', 'qwen3', 'glm-4.5',
@@ -95,14 +102,13 @@ class ModelCapabilityService:
         "reason", "reasoning", "think", "thinking", "cot", "chain-of-thought",
     }
 
-    @classmethod
-    def _normalize_model_name(cls, name: str) -> str:
-        return (name or "").strip().lower()
+    @staticmethod
+    def _normalize_model_name(name: str) -> str:
+        return normalize_model_name(name)
 
-    @classmethod
-    def _base_model_name(cls, name: str) -> str:
-        normalized = cls._normalize_model_name(name)
-        return normalized.split(":", 1)[0]
+    @staticmethod
+    def _base_model_name(name: str) -> str:
+        return base_model_name(name)
 
     @classmethod
     def mark_reasoning_model(cls, name: str):
@@ -286,6 +292,57 @@ class ModelCapabilityService:
         return any(vm in name_lower for vm in cls.VISION_MODELS) or any(vm in base_name for vm in cls.VISION_MODELS)
 
     @classmethod
+    def _details_indicate_video(cls, details: Optional[Dict]) -> bool:
+        if not details:
+            return False
+
+        direct_keys = ("video", "supports_video", "video_input", "supports_video_input")
+        for key in direct_keys:
+            value = details.get(key)
+            if isinstance(value, bool) and value:
+                return True
+
+        capabilities = details.get("capabilities")
+        if isinstance(capabilities, dict):
+            for key in direct_keys:
+                value = capabilities.get(key)
+                if isinstance(value, bool) and value:
+                    return True
+
+        family_candidates = []
+        for key in ("family", "architecture", "format"):
+            value = details.get(key)
+            if isinstance(value, str) and value:
+                family_candidates.append(value.lower())
+        families = details.get("families")
+        if isinstance(families, list):
+            family_candidates.extend(str(f).lower() for f in families if f)
+
+        return any(
+            any(keyword in fam for keyword in cls.VIDEO_KEYWORDS)
+            for fam in family_candidates
+        )
+
+    @classmethod
+    def supports_video(
+        cls,
+        name: str,
+        details: Optional[Dict] = None,
+        official_caps: Optional[Set[str]] = None,
+    ) -> bool:
+        normalized_caps = {str(cap).strip().lower() for cap in (official_caps or set()) if cap}
+        if {"video", "videos", "video_input", "video-input"} & normalized_caps:
+            return True
+
+        name_lower = cls._normalize_model_name(name)
+        base_name = cls._base_model_name(name_lower)
+        if cls._details_indicate_video(details):
+            return True
+        return any(keyword in name_lower for keyword in cls.VIDEO_KEYWORDS) or any(
+            keyword in base_name for keyword in cls.VIDEO_KEYWORDS
+        )
+
+    @classmethod
     def _details_indicate_ocr(cls, details: Optional[Dict]) -> bool:
         if not details:
             return False
@@ -358,6 +415,7 @@ class ModelCapabilityService:
         
         # Detect capabilities
         supports_reasoning = cls.supports_reasoning(name, details)
+        supports_video = cls.supports_video(name, details)
         supports_vision = cls.supports_vision(name, details)
         supports_ocr = cls.supports_ocr(name, details)
         supports_code = any(cm in name_lower for cm in cls.CODE_MODELS)
@@ -379,6 +437,8 @@ class ModelCapabilityService:
         # Capability tags
         if supports_reasoning:
             tags.append('推理')
+        if supports_video:
+            tags.append('视频')
         if supports_vision:
             tags.append('视觉')
         if supports_ocr:
@@ -414,6 +474,7 @@ class ModelCapabilityService:
             parameter_size=parameter_size,
             quantization=quantization,
             supports_reasoning=supports_reasoning,
+            supports_video=supports_video,
             supports_vision=supports_vision,
             supports_ocr=supports_ocr,
             supports_tools=supports_tools,

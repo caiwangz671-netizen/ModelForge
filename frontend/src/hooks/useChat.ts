@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChatStore } from '@/store/chatStore';
 import { useModelStore } from '@/store/modelStore';
 import { chatApi, memoryApi } from '@/services/api';
+import { stripAttachmentDisplayContent } from '@/lib/chatAttachments';
 import { toast } from '@/components/ui/use-toast';
-import type { Message } from '@/types';
+import type { ChatAttachment, Message } from '@/types';
 import type { OfficialModel, OfficialModelDetails } from '@/pages/Chat';
 import { useTranslation } from 'react-i18next';
 
@@ -421,7 +422,7 @@ export function useChat() {
             await fetchConversations();
             setEditingTitle(null);
             toast({ title: t('chat.toast.titleUpdated') });
-        } catch (error) {
+        } catch {
             toast({ title: t('chat.toast.updateFailed'), variant: "destructive" });
         }
     };
@@ -458,8 +459,8 @@ export function useChat() {
         });
     };
 
-    const handleSendMessage = async () => {
-        if (!inputMessage.trim() || isStreaming) return;
+    const handleSendMessage = async (attachments: ChatAttachment[] = []) => {
+        if ((!inputMessage.trim() && attachments.length === 0) || isStreaming) return;
 
         const message = inputMessage.trim();
         const shouldRemember = rememberThisMessage;
@@ -477,7 +478,10 @@ export function useChat() {
 
         const sendOptions = buildSendOptions(model, shouldRemember);
 
-        await sendMessage(message, model, sendOptions);
+        await sendMessage(message, model, {
+            ...sendOptions,
+            attachments,
+        });
     };
 
     const canRetryLastMessage = useMemo(
@@ -489,13 +493,17 @@ export function useChat() {
         if (isStreaming) return;
 
         const lastUser = [...messages].reverse().find((m) => m.role === 'user');
-        const retryContent = lastUser?.content?.trim() || '';
-        if (!retryContent) return;
+        const retryAttachments = Array.isArray(lastUser?.attachments) ? lastUser.attachments : [];
+        const retryContent = stripAttachmentDisplayContent(lastUser?.content || '');
+        if (!retryContent && retryAttachments.length === 0) return;
 
         const model = resolveSendModelOrToast();
         if (!model) return;
         const sendOptions = buildSendOptions(model, false, false);
-        await sendMessage(retryContent, model, sendOptions);
+        await sendMessage(retryContent, model, {
+            ...sendOptions,
+            attachments: retryAttachments,
+        });
     };
 
     const handleStopStreaming = async () => {
@@ -522,7 +530,7 @@ export function useChat() {
         }
     };
 
-    const handleKeyDown = (e: React.KeyboardEvent) => {
+    const handleKeyDown = (e: React.KeyboardEvent, attachments: ChatAttachment[] = []) => {
         if (isPromptPanelOpen && promptSuggestions.length > 0) {
             if (e.key === 'ArrowDown') {
                 e.preventDefault();
@@ -552,7 +560,7 @@ export function useChat() {
 
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-            handleSendMessage();
+            handleSendMessage(attachments);
         }
     };
 

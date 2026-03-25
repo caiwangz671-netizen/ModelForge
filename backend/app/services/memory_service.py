@@ -639,6 +639,13 @@ class MemoryService:
             ),
         )
 
+    async def delete_memory_item(self, memory_id: str) -> None:
+        """Delete a memory item by ID."""
+        await execute_update(
+            "DELETE FROM memory WHERE id = ?",
+            (memory_id,),
+        )
+
     async def search_memories(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
         text = (query or "").strip()
         if not text:

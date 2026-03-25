@@ -3,10 +3,13 @@ import asyncio
 import httpx
 from typing import AsyncGenerator, Optional, Union
 import json
+import os
 import time
 from app.config import get_settings
+from app.utils.model_names import base_model_name
 
 settings = get_settings()
+DEFAULT_OLLAMA_HOSTS = ["http://127.0.0.1:11434", "http://localhost:11434"]
 
 
 class OllamaService:
@@ -28,8 +31,7 @@ class OllamaService:
 
     @staticmethod
     def _base_model_name(model_name: str) -> str:
-        normalized = (model_name or "").strip().lower()
-        return normalized.split(":", 1)[0] if normalized else ""
+        return base_model_name(model_name)
 
     @staticmethod
     def _dedupe_preserve_order(items: list[str]) -> list[str]:
@@ -45,10 +47,63 @@ class OllamaService:
             seen.add(key)
             deduped.append(normalized)
         return deduped
+
+    @staticmethod
+    def _normalize_base_url(raw_url: str | None) -> str:
+        value = str(raw_url or "").strip()
+        if not value:
+            return ""
+        if not value.startswith(("http://", "https://")):
+            value = f"http://{value}"
+        return value.rstrip("/")
+
+    def _update_base_url(self, next_base_url: str) -> None:
+        normalized = self._normalize_base_url(next_base_url)
+        if not normalized or normalized == self.base_url:
+            return
+        self.base_url = normalized
+        self.client.base_url = normalized
+        self.quick_client.base_url = normalized
+        settings.ollama_host = normalized
+
+    def _candidate_base_urls(self) -> list[str]:
+        return self._dedupe_preserve_order([
+            self._normalize_base_url(self.base_url),
+            self._normalize_base_url(settings.ollama_host),
+            self._normalize_base_url(os.getenv("OLLAMA_HOST")),
+            *DEFAULT_OLLAMA_HOSTS,
+        ])
+
+    async def _probe_base_url(self, base_url: str) -> bool:
+        normalized = self._normalize_base_url(base_url)
+        if not normalized:
+            return False
+        try:
+            async with httpx.AsyncClient(base_url=normalized, timeout=3.0) as client:
+                version_response = await client.get("/api/version")
+                if version_response.is_success:
+                    return True
+                tags_response = await client.get("/api/tags")
+                return tags_response.is_success
+        except Exception:
+            return False
+
+    async def ensure_reachable(self) -> str:
+        for candidate in self._candidate_base_urls():
+            if not candidate:
+                continue
+            if await self._probe_base_url(candidate):
+                self._update_base_url(candidate)
+                return candidate
+        raise Exception(
+            "Failed to reach Ollama on any candidate host: "
+            + ", ".join(self._candidate_base_urls())
+        )
     
     async def list_models(self) -> list[dict]:
         """List all available models from Ollama"""
         try:
+            await self.ensure_reachable()
             response = await self.quick_client.get("/api/tags")
             response.raise_for_status()
             data = response.json()
@@ -68,6 +123,7 @@ class OllamaService:
             return cached[1]
 
         try:
+            await self.ensure_reachable()
             # Official docs use {"model": "..."} for /api/show.
             response = await self.quick_client.post("/api/show", json={"model": normalized_name})
             if response.status_code >= 400:
@@ -145,6 +201,7 @@ class OllamaService:
     async def list_running_models(self) -> list[dict]:
         """List currently loaded/running models in Ollama memory"""
         try:
+            await self.ensure_reachable()
             response = await self.quick_client.get("/api/ps")
             response.raise_for_status()
             data = response.json()
@@ -188,6 +245,7 @@ class OllamaService:
         return self._dedupe_preserve_order(targets)
 
     async def _unload_single_model(self, model_name: str) -> None:
+        await self.ensure_reachable()
         response = await self.quick_client.post(
             "/api/generate",
             json={"model": model_name, "prompt": "", "keep_alive": 0},
@@ -238,6 +296,7 @@ class OllamaService:
         """
         Prefer the documented `model` key; fall back to `name` for backward compatibility.
         """
+        await self.ensure_reachable()
         response = await self.quick_client.request("DELETE", "/api/delete", json={"model": model_name})
         if response.status_code == 400:
             response = await self.quick_client.request("DELETE", "/api/delete", json={"name": model_name})
@@ -246,6 +305,7 @@ class OllamaService:
     async def pull_model(self, model_name: str) -> AsyncGenerator[dict, None]:
         """Pull/download a model from Ollama"""
         try:
+            await self.ensure_reachable()
             async with self.client.stream(
                 "POST", 
                 "/api/pull", 
@@ -364,6 +424,7 @@ class OllamaService:
         if keep_alive is not None:
             payload["keep_alive"] = keep_alive
         try:
+            await self.ensure_reachable()
             response = await self.quick_client.post("/api/generate", json=payload)
             response.raise_for_status()
             return True
@@ -373,6 +434,7 @@ class OllamaService:
     async def embed(self, model: str, text: str) -> list[float] | list[list[float]]:
         """Generate embeddings for a text input."""
         try:
+            await self.ensure_reachable()
             # Preferred endpoint in recent Ollama versions
             response = await self.quick_client.post(
                 "/api/embed",
@@ -419,6 +481,7 @@ class OllamaService:
             payload["options"] = options
         
         try:
+            await self.ensure_reachable()
             async with self.client.stream("POST", "/api/generate", json=payload) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
@@ -459,6 +522,7 @@ class OllamaService:
             payload["format"] = format
         
         try:
+            await self.ensure_reachable()
             async with self.client.stream("POST", "/api/chat", json=payload) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
@@ -499,6 +563,7 @@ class OllamaService:
             payload["format"] = format
 
         try:
+            await self.ensure_reachable()
             response = await self.client.post("/api/chat", json=payload)
             response.raise_for_status()
             data = response.json()
@@ -511,6 +576,7 @@ class OllamaService:
     async def get_version(self) -> dict:
         """Get Ollama version"""
         try:
+            await self.ensure_reachable()
             response = await self.quick_client.get("/api/version")
             response.raise_for_status()
             return response.json()

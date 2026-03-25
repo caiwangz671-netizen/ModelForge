@@ -122,10 +122,11 @@ function ToolCallCard({ tool }: { tool: ToolCall }) {
 }
 
 export function ToolUsePanel({ tools, className }: ToolUsePanelProps) {
+  const { t } = useTranslation();
+
   if (!tools || tools.length === 0) {
     return null;
   }
-  const { t } = useTranslation();
 
   const runningCount = tools.filter(t => t.status === 'running').length;
   const completedCount = tools.filter(t => t.status === 'completed').length;

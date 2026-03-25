@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -10,6 +10,7 @@ import { debugMarkdownMathPipeline, preprocessMarkdownContent } from '@/lib/mark
 import 'katex/dist/katex.min.css';
 import 'highlight.js/styles/github-dark.css';
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function remarkDisableIndentedCode(this: any) {
   const data = this.data();
   data.micromarkExtensions = data.micromarkExtensions || [];
@@ -113,8 +114,12 @@ export function MarkdownRenderer({
     console.groupEnd();
   }, [content, enableMath]);
 
+  type ChildProps = { children?: ReactNode };
+  type CodeProps = ChildProps & { inline?: boolean; className?: string } & React.HTMLAttributes<HTMLElement>;
+  type AnchorProps = ChildProps & { href?: string };
+
   const components = useMemo(() => ({
-    code({ inline, className: codeClassName, children, ...props }: any) {
+    code({ inline, className: codeClassName, children, ...props }: CodeProps) {
       const match = /language-(\w+)/.exec(codeClassName || '');
       const language = match ? match[1] : 'text';
       const code = String(children).replace(/\n$/, '');
@@ -140,55 +145,55 @@ export function MarkdownRenderer({
         </code>
       );
     },
-    pre({ children }: any) {
+    pre({ children }: ChildProps) {
       return <>{children}</>;
     },
-    table({ children }: any) {
+    table({ children }: ChildProps) {
       return (
         <div className="overflow-x-auto my-4">
           <table className="w-full border-collapse">{children}</table>
         </div>
       );
     },
-    th({ children }: any) {
+    th({ children }: ChildProps) {
       return <th className="border px-4 py-2 text-left font-semibold bg-muted">{children}</th>;
     },
-    td({ children }: any) {
+    td({ children }: ChildProps) {
       return <td className="border px-4 py-2">{children}</td>;
     },
-    blockquote({ children }: any) {
+    blockquote({ children }: ChildProps) {
       return (
         <blockquote className="border-l-4 border-primary pl-4 my-4 italic text-muted-foreground">
           {children}
         </blockquote>
       );
     },
-    a({ children, href }: any) {
+    a({ children, href }: AnchorProps) {
       return (
         <a href={href} className="text-primary hover:underline" target="_blank" rel="noopener noreferrer">
           {children}
         </a>
       );
     },
-    h1({ children }: any) {
+    h1({ children }: ChildProps) {
       return <h1 className="text-2xl font-bold mt-8 mb-4">{children}</h1>;
     },
-    h2({ children }: any) {
+    h2({ children }: ChildProps) {
       return <h2 className="text-xl font-semibold mt-6 mb-3">{children}</h2>;
     },
-    h3({ children }: any) {
+    h3({ children }: ChildProps) {
       return <h3 className="text-lg font-medium mt-4 mb-2">{children}</h3>;
     },
-    ul({ children }: any) {
+    ul({ children }: ChildProps) {
       return <ul className="list-disc list-inside my-2 space-y-1">{children}</ul>;
     },
-    ol({ children }: any) {
+    ol({ children }: ChildProps) {
       return <ol className="list-decimal list-inside my-2 space-y-1">{children}</ol>;
     },
-    li({ children }: any) {
+    li({ children }: ChildProps) {
       return <li className="ml-4">{children}</li>;
     },
-    p({ children }: any) {
+    p({ children }: ChildProps) {
       return <p className="my-2 leading-relaxed break-words">{children}</p>;
     },
     hr() {
@@ -197,6 +202,7 @@ export function MarkdownRenderer({
   }), [enableMath]);
 
   const remarkPlugins = useMemo(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const plugins: any[] = [remarkDisableIndentedCode];
     if (enableMath) {
       plugins.push([remarkMath, { singleDollarTextMath: true }]);
@@ -207,6 +213,7 @@ export function MarkdownRenderer({
 
   const rehypePlugins = useMemo(() => {
     if (!enableMath) return [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return [[rehypeKatex, { throwOnError: false, strict: 'ignore' }]] as any[];
   }, [enableMath]);
 

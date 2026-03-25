@@ -184,7 +184,7 @@ async function withMainWindowTemporarilyHidden(options, operation) {
 
   try {
     window.hide();
-    await sleep(180);
+    await sleep(350);
     return await operation();
   } finally {
     const restoreWindow = getMainWindow(options);

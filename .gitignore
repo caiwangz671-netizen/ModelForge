@@ -1,6 +1,11 @@
 # macOS
 .DS_Store
 .env
+.cache/
+.claude/
+.vscode/
+.tmp-chat-image-test.png
+*.db
 
 # Logs
 logs/*.log

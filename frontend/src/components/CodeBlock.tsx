@@ -117,7 +117,6 @@ export function CodeBlock({ code, language = 'text', className }: CodeBlockProps
         <pre className="flex-1 p-4 overflow-x-auto bg-zinc-950">
           <code
             className={`hljs language-${displayLanguage} text-sm font-mono leading-5`}
-            // eslint-disable-next-line react/no-danger
             dangerouslySetInnerHTML={{ __html: highlightedHtml }}
           />
         </pre>

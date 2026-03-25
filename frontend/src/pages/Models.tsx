@@ -68,6 +68,7 @@ export function Models() {
     downloadDialogModel,
     downloadDialogOpen,
     isLoadingTags,
+    libraryMeta,
     allFamilies,
     allCapabilities,
     filteredDownloaded,
@@ -104,7 +105,25 @@ export function Models() {
   const { models, fetchLibraryModels, isLoading, libraryModels } = modelStore;
 
   // Smart recommendation engine
-  const { hardware, loading: hwLoading, memoryLabel, perfectModels, goodModels } = useModelRecommendation(libraryModels);
+  const { hardware, loading: hwLoading, memoryLabel, perfectModels, goodModels, possibleModels } = useModelRecommendation(libraryModels);
+  const liveCatalogSourceLabel = (() => {
+    switch (libraryMeta?.source) {
+      case 'official-api+search+library':
+        return 'ollama.com/api/tags + search + library';
+      case 'official-api+search':
+        return 'ollama.com/api/tags + search';
+      case 'official-search':
+        return 'ollama.com/search';
+      case 'official-library':
+        return 'ollama.com/library';
+      case 'official-api':
+      default:
+        return 'ollama.com/api/tags';
+    }
+  })();
+  const liveCatalogSyncedAt = libraryMeta?.fetched_at
+    ? new Date(libraryMeta.fetched_at * 1000).toLocaleTimeString()
+    : null;
 
   // Search within recommended tab
   const filterRec = (list: typeof perfectModels) => {
@@ -118,6 +137,7 @@ export function Models() {
   };
   const filteredPerfect = filterRec(perfectModels);
   const filteredGood = filterRec(goodModels);
+  const filteredPossible = filterRec(possibleModels);
 
   return (
     <div className="space-y-6">
@@ -125,6 +145,15 @@ export function Models() {
         <div>
           <h2 className="text-3xl font-bold tracking-tight">{t('models.title')}</h2>
           <p className="text-muted-foreground mt-1">{t('models.subtitle')}</p>
+          {libraryMeta?.count ? (
+            <p className="mt-2 text-xs text-muted-foreground">
+              {t('models.liveCatalog', {
+                count: libraryMeta.count,
+                source: liveCatalogSourceLabel,
+                syncedAt: liveCatalogSyncedAt || '--:--',
+              })}
+            </p>
+          ) : null}
         </div>
         <div className="flex gap-2">
           <Button
@@ -389,10 +418,15 @@ export function Models() {
                               <h4 className="font-bold text-lg tracking-tight truncate group-hover:text-primary transition-colors">
                                 {rec.model.name}
                               </h4>
-                              <Badge className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20 shrink-0 text-[10px]">
-                                <Sparkles className="h-3 w-3 mr-1" />
-                                {t('models.suitableHardware')}
-                              </Badge>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <Badge variant="outline" className="text-[10px] font-mono border-primary/20 bg-primary/5">
+                                  {rec.score}
+                                </Badge>
+                                <Badge className="bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20 shrink-0 text-[10px]">
+                                  <Sparkles className="h-3 w-3 mr-1" />
+                                  {t('models.suitableHardware')}
+                                </Badge>
+                              </div>
                             </div>
                             <p className="text-[13px] text-muted-foreground line-clamp-2 mb-2">{stripEmojis(rec.model.description)}</p>
                             <div className="flex items-center gap-2 mb-3">
@@ -401,6 +435,15 @@ export function Models() {
                                 {t('models.approxRam', { value: rec.estimatedRamGB.toFixed(1) })}
                               </span>
                             </div>
+                            {rec.highlights.length > 0 && (
+                              <div className="mb-3 flex flex-wrap gap-1.5">
+                                {rec.highlights.map((highlight) => (
+                                  <Badge key={highlight} variant="secondary" className="text-[10px] h-5 px-1.5">
+                                    {highlight}
+                                  </Badge>
+                                ))}
+                              </div>
+                            )}
                             <p className="text-xs text-muted-foreground mb-3">{rec.reason}</p>
                             <div className="mt-auto pt-2">
                               <div className="flex flex-wrap gap-1.5 mb-3">
@@ -447,6 +490,9 @@ export function Models() {
                               <h4 className="font-bold text-lg tracking-tight truncate group-hover:text-primary transition-colors">
                                 {rec.model.name}
                               </h4>
+                              <Badge variant="outline" className="text-[10px] font-mono border-primary/20 bg-primary/5 shrink-0">
+                                {rec.score}
+                              </Badge>
                             </div>
                             <p className="text-[13px] text-muted-foreground line-clamp-2 mb-2">{stripEmojis(rec.model.description)}</p>
                             <div className="flex items-center gap-2 mb-3">
@@ -455,6 +501,15 @@ export function Models() {
                                 {t('models.approxRam', { value: rec.estimatedRamGB.toFixed(1) })}
                               </span>
                             </div>
+                            {rec.highlights.length > 0 && (
+                              <div className="mb-3 flex flex-wrap gap-1.5">
+                                {rec.highlights.map((highlight) => (
+                                  <Badge key={highlight} variant="secondary" className="text-[10px] h-5 px-1.5">
+                                    {highlight}
+                                  </Badge>
+                                ))}
+                              </div>
+                            )}
                             <p className="text-xs text-muted-foreground mb-3">{rec.reason}</p>
                             <div className="mt-auto pt-2">
                               <Button
@@ -475,7 +530,68 @@ export function Models() {
                 </div>
               )}
 
-              {perfectModels.length === 0 && goodModels.length === 0 && (
+              {filteredPossible.length > 0 && (
+                <div>
+                  <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                    <CheckCircle2 className="h-5 w-5 text-sky-500" />
+                    {t('models.worthTrying')} ({filteredPossible.length})
+                  </h3>
+                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                    {filteredPossible.map((rec, index) => (
+                      <motion.div
+                        key={rec.model.slug}
+                        className="h-full"
+                        initial={{ opacity: 0, y: 15 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.3, delay: Math.min(index * 0.03, 0.3) }}
+                      >
+                        <Card className="hover:border-primary/40 transition-all duration-300 hover:shadow-md md:rounded-xl group bg-card h-full flex flex-col">
+                          <CardContent className="p-4 md:p-5 flex flex-col h-full">
+                            <div className="flex items-start justify-between gap-2 mb-2">
+                              <h4 className="font-bold text-lg tracking-tight truncate group-hover:text-primary transition-colors">
+                                {rec.model.name}
+                              </h4>
+                              <Badge variant="outline" className="text-[10px] font-mono border-primary/20 bg-primary/5 shrink-0">
+                                {rec.score}
+                              </Badge>
+                            </div>
+                            <p className="text-[13px] text-muted-foreground line-clamp-2 mb-2">{stripEmojis(rec.model.description)}</p>
+                            <div className="flex items-center gap-2 mb-3">
+                              <Badge variant="outline" className="text-[10px] font-mono">{rec.bestSize}</Badge>
+                              <span className="text-xs text-muted-foreground">
+                                {t('models.approxRam', { value: rec.estimatedRamGB.toFixed(1) })}
+                              </span>
+                            </div>
+                            {rec.highlights.length > 0 && (
+                              <div className="mb-3 flex flex-wrap gap-1.5">
+                                {rec.highlights.map((highlight) => (
+                                  <Badge key={highlight} variant="secondary" className="text-[10px] h-5 px-1.5">
+                                    {highlight}
+                                  </Badge>
+                                ))}
+                              </div>
+                            )}
+                            <p className="text-xs text-muted-foreground mb-3">{rec.reason}</p>
+                            <div className="mt-auto pt-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="w-full rounded-lg text-[13px] font-medium h-9"
+                                onClick={() => handleOpenLibraryModel(rec.model)}
+                              >
+                                <Download className="h-3.5 w-3.5 mr-1.5" />
+                                {t('models.download')}
+                              </Button>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      </motion.div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {perfectModels.length === 0 && goodModels.length === 0 && possibleModels.length === 0 && (
                 <Card>
                   <CardContent className="p-8 text-center text-muted-foreground">
                     <Sparkles className="h-12 w-12 mx-auto mb-4 opacity-50" />

@@ -14,18 +14,6 @@ except Exception:  # pragma: no cover - graceful fallback when dependency is mis
 class ChatService:
     """Service for handling chat messages with reasoning support"""
     
-    # Models that support reasoning/thinking
-    REASONING_MODELS = [
-        'deepseek-r1',
-        'deepseek-reasoner',
-        'qwq',
-        'qwq-32b',
-        'o1',
-        'o1-mini',
-        'o3',
-        'o3-mini',
-    ]
-    
     @staticmethod
     def is_reasoning_model(model_name: str) -> bool:
         """Check if model supports reasoning/thinking"""

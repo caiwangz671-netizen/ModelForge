@@ -28,19 +28,19 @@ export function MathRenderer({ content, className = '' }: MathRendererProps) {
           displayMode: true,
           throwOnError: false,
         });
-      } catch (e) {
+      } catch {
         return `<div class="text-red-500">Math Error</div>`;
       }
     });
 
     // Process inline math: $...$
-    processed = processed.replace(/\$([^\$\s][^\$]*?)\$/g, (_, latex) => {
+    processed = processed.replace(/\$([^$\s][^$]*?)\$/g, (_, latex) => {
       try {
         return katex.renderToString(latex.trim(), {
           displayMode: false,
           throwOnError: false,
         });
-      } catch (e) {
+      } catch {
         return `<span class="text-red-500">$${latex}$</span>`;
       }
     });
@@ -53,7 +53,7 @@ export function MathRenderer({ content, className = '' }: MathRendererProps) {
           displayMode: false,
           throwOnError: false,
         });
-      } catch (e) {
+      } catch {
         return `<span class="text-red-500">\\(${latex}\\)</span>`;
       }
     });
@@ -65,7 +65,7 @@ export function MathRenderer({ content, className = '' }: MathRendererProps) {
           displayMode: true,
           throwOnError: false,
         });
-      } catch (e) {
+      } catch {
         return `<div class="text-red-500">\\[${latex}\\]</div>`;
       }
     });
@@ -80,6 +80,7 @@ export function MathRenderer({ content, className = '' }: MathRendererProps) {
  * Extract and render math from markdown content
  * Returns { textWithoutMath, mathBlocks }
  */
+// eslint-disable-next-line react-refresh/only-export-components
 export function extractMath(content: string): {
   text: string;
   mathBlocks: Array<{ type: 'inline' | 'display'; content: string }>;
@@ -94,7 +95,7 @@ export function extractMath(content: string): {
   });
 
   // Extract inline math
-  text = text.replace(/\$([^\$\s][^\$]*?)\$/g, (_, latex) => {
+  text = text.replace(/\$([^$\s][^$]*?)\$/g, (_, latex) => {
     mathBlocks.push({ type: 'inline', content: latex.trim() });
     return `[[MATH_${mathBlocks.length - 1}]]`;
   });
@@ -105,6 +106,7 @@ export function extractMath(content: string): {
 /**
  * Check if content contains math expressions
  */
+// eslint-disable-next-line react-refresh/only-export-components
 export function hasMath(content: string): boolean {
-  return /\$[^\$]+\$|\$\$[\s\S]*?\$\$|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\]/.test(content);
+  return /\$[^$]+\$|\$\$[\s\S]*?\$\$|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\]/.test(content);
 }

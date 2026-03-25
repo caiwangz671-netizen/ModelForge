@@ -11,6 +11,7 @@ import { Check, X, Server, Globe, Database, RefreshCw, Brain, Cpu, HardDrive, Mo
 import { useTranslation } from 'react-i18next';
 import type { ComputerUseApprovalMode } from '@/types/computerUse';
 import { loadComputerUsePreferences, normalizeComputerUsePaths, saveComputerUsePreferences } from '@/lib/computerUsePreferences';
+import { openFirstLaunchGuide } from '@/lib/onboarding';
 
 const MAX_OUTPUT_TOKEN_PRESETS = [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144];
 const MAX_CONTEXT_TOKEN_PRESETS = [2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576];
@@ -808,6 +809,22 @@ export function Settings() {
                 </p>
               </div>
               <Switch checked={darkMode} onCheckedChange={toggleDarkMode} />
+            </div>
+            <div className="flex items-center justify-between pt-2 border-t">
+              <div className="space-y-0.5">
+                <Label>{t('settings.welcomeGuide')}</Label>
+                <p className="text-sm text-muted-foreground">
+                  {t('settings.welcomeGuideDesc')}
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={openFirstLaunchGuide}
+              >
+                <Sparkles className="h-4 w-4" />
+                {t('settings.reopenWelcomeGuide')}
+              </Button>
             </div>
           </CardContent>
         </Card>

@@ -29,9 +29,11 @@ async def system_health():
         # Check Ollama connection
         ollama_status = "healthy"
         ollama_version = None
+        ollama_host = ollama_service.base_url
         try:
             version_info = await ollama_service.get_version()
             ollama_version = version_info.get("version")
+            ollama_host = ollama_service.base_url
         except Exception as e:
             ollama_status = f"unhealthy: {str(e)}"
         
@@ -41,7 +43,8 @@ async def system_health():
             "status": "healthy",
             "ollama": {
                 "status": ollama_status,
-                "version": ollama_version
+                "version": ollama_version,
+                "host": ollama_host,
             },
             "memory": memory_status,
         }

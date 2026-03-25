@@ -40,19 +40,19 @@ export function Layout({ children }: LayoutProps) {
     <div className="relative flex h-screen flex-col overflow-hidden bg-background">
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <motion.div
-          className="absolute -top-24 left-[12%] h-[320px] w-[320px] rounded-full bg-[radial-gradient(circle,rgba(14,165,233,0.12),transparent_70%)] blur-3xl"
+          className="absolute -top-24 left-[12%] h-[320px] w-[320px] rounded-full bg-[radial-gradient(circle,rgba(14,165,233,0.14),transparent_70%)] blur-3xl dark:bg-[radial-gradient(circle,rgba(34,211,238,0.16),transparent_70%)]"
           animate={{ x: [0, 42, -18, 0], y: [0, 26, -12, 0], scale: [1, 1.06, 0.97, 1] }}
           transition={{ duration: 24, repeat: Infinity, ease: 'easeInOut' }}
         />
         <motion.div
-          className="absolute right-[-80px] top-[18%] h-[360px] w-[360px] rounded-full bg-[radial-gradient(circle,rgba(15,23,42,0.09),transparent_72%)] blur-3xl"
+          className="absolute right-[-80px] top-[18%] h-[360px] w-[360px] rounded-full bg-[radial-gradient(circle,rgba(15,23,42,0.09),transparent_72%)] blur-3xl dark:bg-[radial-gradient(circle,rgba(59,130,246,0.12),transparent_72%)]"
           animate={{ x: [0, -34, 16, 0], y: [0, -18, 12, 0], scale: [1, 0.97, 1.05, 1] }}
           transition={{ duration: 28, repeat: Infinity, ease: 'easeInOut' }}
         />
       </div>
 
       {/* Mobile header */}
-      <div className="relative z-10 border-b border-slate-200/80 bg-background/80 p-4 backdrop-blur dark:border-slate-800/80 lg:hidden">
+      <div className="relative z-10 border-b border-border/70 bg-background/80 p-4 backdrop-blur lg:hidden">
         <h1 className="text-xl font-bold">ModelForge</h1>
         <Button
           variant="ghost"
@@ -67,7 +67,10 @@ export function Layout({ children }: LayoutProps) {
         {/* Sidebar */}
         <aside
           className={cn(
-            'fixed inset-y-0 left-0 z-50 w-64 border-r border-slate-200/80 bg-white/88 shadow-[0_30px_80px_-70px_rgba(15,23,42,0.35)] backdrop-blur-xl transform transition-transform duration-300 ease-out dark:border-slate-800/80 dark:bg-slate-950/88 dark:shadow-[0_34px_90px_-70px_rgba(2,8,23,0.95)]',
+            'fixed inset-y-0 left-0 z-50 w-64 border-r shadow-[0_30px_80px_-70px_rgba(15,23,42,0.35)] backdrop-blur-xl transform transition-transform duration-300 ease-out',
+            isComputerUsePage
+              ? 'border-white/10 bg-[linear-gradient(180deg,rgba(5,12,25,0.9),rgba(3,9,20,0.96))]'
+              : 'border-border/70 bg-background/82 dark:bg-[linear-gradient(180deg,rgba(9,15,28,0.94),rgba(7,12,22,0.98))] dark:shadow-[0_30px_80px_-70px_rgba(2,6,23,0.85)]',
             'lg:translate-x-0',
             sidebarOpen ? 'translate-x-0' : '-translate-x-full',
           )}
@@ -91,7 +94,9 @@ export function Layout({ children }: LayoutProps) {
                       'relative block overflow-hidden rounded-xl px-3 py-2 text-sm font-medium transition-colors',
                       isActive
                         ? 'text-primary-foreground'
-                        : 'text-muted-foreground hover:text-foreground'
+                        : isComputerUsePage
+                          ? 'text-slate-400 hover:text-slate-50'
+                          : 'text-muted-foreground hover:text-foreground'
                     )}
                   >
                     {isActive && (
@@ -124,14 +129,19 @@ export function Layout({ children }: LayoutProps) {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.22, ease: 'easeOut' }}
-              className="fixed inset-0 z-40 bg-slate-950/30 backdrop-blur-[2px] lg:hidden"
+              className="fixed inset-0 z-40 bg-slate-950/40 backdrop-blur-[2px] lg:hidden"
               onClick={() => setSidebarOpen(false)}
             />
           )}
         </AnimatePresence>
 
         {/* Main content */}
-        <main className="flex-1 min-h-0 overflow-y-auto lg:ml-64 bg-background">
+        <main className={cn(
+          'flex-1 min-h-0 overflow-y-auto lg:ml-64',
+          isComputerUsePage
+            ? 'bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.08),transparent_24%),radial-gradient(circle_at_80%_0%,rgba(59,130,246,0.1),transparent_22%),linear-gradient(180deg,#020617_0%,#030916_100%)]'
+            : 'bg-background dark:bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.06),transparent_22%),radial-gradient(circle_at_82%_0%,rgba(59,130,246,0.08),transparent_20%),linear-gradient(180deg,#070d18_0%,#050912_100%)]',
+        )}>
           <motion.div
             layout
             transition={{ layout: { duration: 0.36, ease: [0.22, 1, 0.36, 1] } }}

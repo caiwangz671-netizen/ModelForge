@@ -1,4 +1,5 @@
 import axios from 'axios';
+import type { ChatAttachment } from '@/types';
 
 export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
 
@@ -52,6 +53,7 @@ export const chatApi = {
   chat: (data: {
     model: string;
     messages: { role: string; content: string }[];
+    attachments?: ChatAttachment[];
     system?: string;
     temperature?: number;
     top_p?: number;

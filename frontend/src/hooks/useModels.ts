@@ -54,7 +54,7 @@ export function useModels() {
 
     useEffect(() => {
         modelStore.fetchModels();
-        modelStore.fetchLibraryModels();
+        modelStore.fetchLibraryModels(true);
         modelStore.fetchRunningModels();
         modelStore.fetchResidencyStatus();
         fetchTasks();
@@ -64,7 +64,14 @@ export function useModels() {
             fetchTasks();
         }, 5000);
 
-        return () => clearInterval(timer);
+        const libraryRefreshTimer = setInterval(() => {
+            modelStore.fetchLibraryModels(true);
+        }, 60000);
+
+        return () => {
+            clearInterval(timer);
+            clearInterval(libraryRefreshTimer);
+        };
     }, []);
 
     const handleDownload = async (modelName: string) => {
@@ -301,6 +308,7 @@ export function useModels() {
             downloadDialogModel,
             downloadDialogOpen,
             isLoadingTags,
+            libraryMeta: modelStore.libraryMeta,
             allFamilies,
             allCapabilities,
             filteredDownloaded,

@@ -14,6 +14,8 @@ from app.utils.env import upsert_env_value
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+OFFICIAL_VIDEO_CAPS = {"video", "videos", "video_input", "video-input"}
+
 
 class ModelInfo(BaseModel):
     name: str
@@ -78,12 +80,15 @@ async def list_models():
             )
             if official_caps:
                 supports_reasoning = "thinking" in official_caps
+                supports_video = bool(OFFICIAL_VIDEO_CAPS & official_caps)
                 supports_vision = "vision" in official_caps
                 supports_tools = "tools" in official_caps
                 supports_embedding = ("embedding" in official_caps or "embeddings" in official_caps)
             else:
                 # Fallback only when official capabilities are unavailable.
                 supports_reasoning = caps.supports_reasoning
+                # Native Computer Use direct access is only enabled for official video capability.
+                supports_video = False
                 supports_vision = caps.supports_vision
                 # Tools are strictly gated by official Ollama capabilities.
                 # If capabilities are unavailable, expose as unsupported.
@@ -95,6 +100,7 @@ async def list_models():
                 'ollama_capabilities': sorted(list(official_caps)),
                 'capabilities': {
                     'supports_reasoning': supports_reasoning,
+                    'supports_video': supports_video,
                     'supports_vision': supports_vision,
                     'supports_ocr': supports_ocr,
                     'supports_tools': supports_tools,
@@ -131,10 +137,14 @@ async def list_library_models(refresh: bool = False):
     """List models from official ollama.com/library."""
     try:
         models = await library_service.list_models(refresh=refresh)
-        return {"models": models}
+        return {"models": models, "meta": library_service.get_models_meta()}
     except Exception as e:
         logger.warning("Failed to fetch library models; returning empty list", exc_info=True)
-        return {"models": [], "warning": f"Failed to fetch library models: {str(e)}"}
+        return {
+            "models": [],
+            "meta": library_service.get_models_meta(),
+            "warning": f"Failed to fetch library models: {str(e)}",
+        }
 
 
 @router.get("/library/{model_name:path}/tags")
@@ -195,12 +205,12 @@ async def get_residency():
 async def set_residency(request: ModelResidencyRequest):
     """Set whether a model should stay resident in memory."""
     try:
-        from app.config import resolve_persisted_env_path
+        from app.config import PROJECT_ROOT
         resident_models = model_residency_service.set_resident(
             request.model,
             resident=request.resident,
         )
-        env_path = resolve_persisted_env_path()
+        env_path = PROJECT_ROOT / ".env"
         resident_env_value = ",".join(resident_models) if resident_models else None
         upsert_env_value(env_path, "RESIDENT_MODELS", resident_env_value)
         return {

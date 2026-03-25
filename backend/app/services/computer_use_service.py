@@ -18,6 +18,7 @@ from app.services.computer_helper_client import computer_helper_client
 from app.services.database import execute_insert, execute_query, execute_update
 from app.services.model_capabilities import ModelCapabilityService
 from app.services.ollama import ollama_service
+from app.services.prompt_service import PromptService
 
 MAX_TOOL_ROUNDS = max(24, int(os.getenv("MODELFORGE_COMPUTER_USE_MAX_TOOL_ROUNDS", "48")))
 TERMINAL_SESSION_STATUSES = {"completed", "failed", "cancelled"}
@@ -96,13 +97,15 @@ MAX_TOOL_RETRIES = max(2, int(os.getenv("MODELFORGE_COMPUTER_USE_MAX_TOOL_RETRIE
 RECOMMENDED_OCR_MODEL = "glm-ocr:latest"
 RECOMMENDED_LOCAL_OCR_NAME = "Tesseract OCR"
 RECOMMENDED_LOCAL_OCR_INSTALL_HINT = "brew install tesseract"
+NATIVE_VIDEO_CAPS = {"video", "videos", "video_input", "video-input"}
+DIRECT_VISUAL_CAPS = NATIVE_VIDEO_CAPS | {"vision", "image", "images"}
 OCR_EXTRACTION_PROMPT = (
     "You are extracting OCR from a desktop screenshot.\n"
     "Return only the visible text and short structural labels in reading order.\n"
     "Do not explain. Do not summarize. If nothing is readable, return an empty string."
 )
-VISION_SNAPSHOT_PROMPT = (
-    "You are analyzing a desktop screenshot for an autonomous computer-use agent.\n"
+NATIVE_VIDEO_SNAPSHOT_PROMPT = (
+    "You are analyzing the latest desktop frame for an autonomous computer-use agent.\n"
     "Return Simplified Chinese Markdown only.\n"
     "Use this structure when information is available:\n"
     "### 当前界面\n"
@@ -152,12 +155,50 @@ SECRET_HINTS = (
     "密码",
     "口令",
 )
+SAFE_TERMINAL_PREFIXES = (
+    "pwd",
+    "ls",
+    "find",
+    "rg",
+    "grep",
+    "cat",
+    "head",
+    "tail",
+    "wc",
+    "stat",
+    "file",
+    "open",
+)
+DANGEROUS_TERMINAL_MARKERS = (
+    " rm ",
+    "rm -",
+    " rm/",
+    "sudo",
+    "chmod",
+    "chown",
+    "mkfs",
+    "diskutil erase",
+    "git push",
+    "scp ",
+    "ssh ",
+    "curl ",
+    "wget ",
+    "brew install",
+    "brew uninstall",
+    "npm install",
+    "pnpm add",
+    "yarn add",
+    ">",
+    ">>",
+    "| sh",
+    "| bash",
+)
 TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
             "name": "computer_snapshot",
-            "description": "Capture a fresh screenshot and return desktop perception text using vision when available, otherwise OCR.",
+            "description": "Capture a fresh screenshot and return desktop perception text using direct visual routing when available, otherwise OCR.",
             "parameters": {"type": "object", "properties": {}},
         },
     },
@@ -449,44 +490,12 @@ TOOL_SCHEMAS = [
         },
     },
 ]
-COMPUTER_USE_SYSTEM_PROMPT = (
-    "You are in ModelForge Computer Use Beta.\n"
-    "Rules:\n"
-    "1. Observe before acting. Your first useful tool call should usually be computer_snapshot or browser_query_state.\n"
-    "2. After every state-changing action, re-observe with computer_snapshot, computer_query_state, or browser_query_state.\n"
-    "3. Do not claim you saw or clicked something unless a tool confirmed it.\n"
-    "4. Prefer small, reversible steps.\n"
-    "5. Do not output internal planning. Only use tools and then produce concise progress updates.\n"
-    "6. If the environment is unclear, request another snapshot instead of guessing.\n"
-    "7. If a tool is rejected or blocked, adapt the plan and continue safely.\n"
-    "8. User-facing updates must be concise Markdown in Simplified Chinese.\n"
-    "9. Do not paste raw OCR or raw snapshot observations back to the user unless they explicitly ask for them.\n"
-    "10. When a visible control needs clicking, prefer computer_click_target or computer_locate_target plus computer_click_box. Use raw computer_click only as a fallback.\n"
-    "11. If you reach login, captcha, password, SMS verification, payment, checkout, or any page that clearly requires the user to take over, call computer_wait_for_user with a short Chinese instruction and wait.\n"
-    "12. After the user resumes from computer_wait_for_user, immediately re-observe the page before continuing.\n"
-    "13. For website tasks, prefer controlled browser tools (browser_navigate, browser_query_state, browser_click, browser_type, browser_keypress, browser_scroll, browser_back) instead of desktop clicking whenever possible.\n"
-    "14. If an action is rejected or transiently fails, do not give up. Re-plan from the current state, avoid repeating the exact same failed action blindly, and continue.\n"
-)
-OBSERVATION_ONLY_SYSTEM_NOTE = (
-    "Desktop accessibility permission is unavailable right now.\n"
-    "You may observe the screen with computer_snapshot, but avoid computer_query_state, "
-    "computer_click, computer_type, computer_keypress, and computer_scroll because they will fail.\n"
-    "If the user's goal requires interaction, state that accessibility permission must be enabled."
-)
-BROWSER_ONLY_SYSTEM_NOTE = (
-    "Native desktop input control is unavailable in the current runtime, but the controlled browser is available.\n"
-    "For website tasks, prefer browser_navigate, browser_query_state, browser_click, browser_type, "
-    "browser_keypress, browser_scroll, and browser_back.\n"
-    "Avoid computer_query_state, computer_click, computer_type, computer_keypress, and computer_scroll "
-    "unless the user explicitly needs unsupported desktop interaction.\n"
-    "If the user asks for native desktop control outside the browser, explain that webpage automation remains available while native desktop input is not."
-)
-HANDS_FREE_SYSTEM_NOTE = (
-    "Hands-free execution is enabled for this session.\n"
-    "Continue through normal browser and desktop navigation without asking for confirmation after each step.\n"
-    "If you reach login, password, captcha, SMS verification, payment, checkout, system settings, "
-    "or any other irreversible confirmation, use computer_wait_for_user instead of proceeding."
-)
+COMPUTER_USE_SYSTEM_PROMPT = PromptService.build_computer_use_system_prompt()
+NATIVE_VIDEO_ROUTE_NOTE = PromptService.build_computer_use_route_note(True)
+OCR_ROUTE_SYSTEM_NOTE = PromptService.build_computer_use_route_note(False)
+OBSERVATION_ONLY_SYSTEM_NOTE = PromptService.build_computer_use_observation_only_note()
+BROWSER_ONLY_SYSTEM_NOTE = PromptService.build_computer_use_browser_only_note()
+HANDS_FREE_SYSTEM_NOTE = PromptService.build_computer_use_hands_free_note()
 
 
 def _now() -> float:
@@ -517,6 +526,24 @@ def _truncate(text: str, limit: int = 4000) -> str:
     if len(text) <= limit:
         return text
     return f"{text[:limit]}...(truncated)"
+
+
+def _is_safe_terminal_command(command: str) -> bool:
+    normalized = f" {str(command or '').strip().lower()} "
+    if not normalized.strip():
+        return False
+    if any(marker in normalized for marker in DANGEROUS_TERMINAL_MARKERS):
+        return False
+    stripped = normalized.strip()
+    if any(stripped == prefix or stripped.startswith(f"{prefix} ") for prefix in SAFE_TERMINAL_PREFIXES):
+        return True
+    if re.match(r"^(npm|pnpm|yarn)\s+(run\s+)?(build|dev|preview|start)\b", stripped):
+        return True
+    if re.match(r"^python3?\s+-m\s+http\.server\b", stripped):
+        return True
+    if re.match(r"^npx\s+vite(\s+(preview|dev))?\b", stripped):
+        return True
+    return False
 
 
 def _normalize_snapshot_markdown(text: str) -> str:
@@ -815,6 +842,19 @@ def _format_session_status_label(status: Any) -> str:
     return mapping.get(key, key or "未知状态")
 
 
+def _format_status_hud_tone(status: Any) -> str:
+    key = str(status or "").strip().lower()
+    if key in {"completed"}:
+        return "success"
+    if key in {"waiting_approval", "paused"}:
+        return "warning"
+    if key in {"failed", "cancelled"}:
+        return "error"
+    if key in {"running"}:
+        return "running"
+    return "neutral"
+
+
 @dataclass
 class ApprovalWaiter:
     approval_id: str
@@ -835,6 +875,16 @@ class RuntimeSession:
 
     def __post_init__(self) -> None:
         self.pause_event.set()
+
+
+def _supports_native_video(official_caps: set[str] | None) -> bool:
+    normalized = {str(cap).strip().lower() for cap in (official_caps or set()) if cap}
+    return bool(NATIVE_VIDEO_CAPS & normalized)
+
+
+def _supports_direct_visual_route(official_caps: set[str] | None) -> bool:
+    normalized = {str(cap).strip().lower() for cap in (official_caps or set()) if cap}
+    return bool(DIRECT_VISUAL_CAPS & normalized)
 
 
 class ComputerUseService:
@@ -870,6 +920,7 @@ class ComputerUseService:
                 details,
                 official_caps=official_caps,
             )
+            supports_video = _supports_native_video(official_caps)
             supports_ocr = ModelCapabilityService.supports_ocr(
                 name,
                 details,
@@ -884,6 +935,7 @@ class ComputerUseService:
             return {
                 "name": name,
                 "supports_ocr": supports_ocr,
+                "supports_video": supports_video,
                 "supports_vision": supports_vision,
                 "supports_tools": "tools" in official_caps,
                 "dedicated": dedicated,
@@ -899,6 +951,7 @@ class ComputerUseService:
             key=lambda item: (
                 0 if item.get("dedicated") else 1,
                 0 if item.get("supports_tools") else 1,
+                0 if item.get("supports_video") else 1,
                 0 if item.get("supports_vision") else 1,
                 str(item.get("name") or "").lower(),
             )
@@ -938,7 +991,7 @@ class ComputerUseService:
         content = _normalize_snapshot_markdown(str(message.get("content") or "").strip())
         return _truncate(content, 12000)
 
-    async def _vision_snapshot_with_model(self, file_path: Path, model_name: str) -> str:
+    async def _native_snapshot_with_model(self, file_path: Path, model_name: str) -> str:
         if not file_path.exists() or not file_path.is_file():
             return ""
         try:
@@ -949,7 +1002,7 @@ class ComputerUseService:
                 messages=[
                     {
                         "role": "user",
-                        "content": VISION_SNAPSHOT_PROMPT,
+                        "content": NATIVE_VIDEO_SNAPSHOT_PROMPT,
                         "images": [image_b64],
                     }
                 ],
@@ -966,13 +1019,13 @@ class ComputerUseService:
         content = str(message.get("content") or "").strip()
         return _truncate(content, 12000)
 
-    async def _locator_model_name(self, session_model: str) -> Optional[str]:
+    async def _locator_strategy(self, session_model: str) -> Optional[dict[str, str]]:
         session_caps = await ollama_service.get_model_capabilities(session_model)
-        if "vision" in session_caps:
-            return session_model
+        if _supports_direct_visual_route(session_caps):
+            return {"model_name": session_model, "route": "visual"}
         preferred_ocr_model = await self._preferred_ocr_model()
         if preferred_ocr_model and preferred_ocr_model.get("name"):
-            return str(preferred_ocr_model["name"])
+            return {"model_name": str(preferred_ocr_model["name"]), "route": "ocr"}
         return None
 
     async def _locate_target_with_model(self, file_path: Path, model_name: str, target: str) -> dict[str, Any]:
@@ -1108,27 +1161,39 @@ class ComputerUseService:
         helper_ocr_text = str(result.get("ocr_text") or "").strip()
         observation_text = ""
 
+        # If local OCR already provides rich text (>= 120 chars), skip expensive
+        # Ollama OCR passes on local hardware. Native video-capable models still
+        # use their own direct perception route and do not respect this shortcut.
+        _ocr_rich_threshold = int(os.getenv("MODELFORGE_COMPUTER_USE_OCR_RICH_THRESHOLD", "120"))
+        _ocr_is_rich = len(helper_ocr_text) >= _ocr_rich_threshold
+
         session_caps = await ollama_service.get_model_capabilities(session["model"])
-        if "vision" in session_caps:
-            vision_text = await self._vision_snapshot_with_model(file_path, session["model"])
-            if vision_text:
-                observation_text = vision_text
-                result["perception_route"] = "vision"
-                result["vision_model"] = session["model"]
+        if _supports_direct_visual_route(session_caps):
+            native_text = await self._native_snapshot_with_model(file_path, session["model"])
+            if native_text:
+                observation_text = native_text
+                result["perception_route"] = "visual"
+                result["video_model"] = session["model"]
+                result["visual_model"] = session["model"]
+                result["perception_model"] = session["model"]
+                result["live_native"] = True
 
         if not observation_text:
             ocr_text = helper_ocr_text
             preferred_ocr_model = await self._preferred_ocr_model()
-            if preferred_ocr_model:
+            if preferred_ocr_model and not _ocr_is_rich:
                 ollama_ocr_text = await self._ocr_text_with_ollama(file_path, str(preferred_ocr_model["name"]))
                 if ollama_ocr_text:
                     ocr_text = ollama_ocr_text
                     result["ocr_source"] = "ollama"
                     result["ocr_model"] = preferred_ocr_model["name"]
+                    result["perception_model"] = preferred_ocr_model["name"]
                 elif ocr_text:
                     result["ocr_source"] = "local"
+                    result["perception_model"] = RECOMMENDED_LOCAL_OCR_NAME
             elif ocr_text:
                 result["ocr_source"] = "local"
+                result["perception_model"] = RECOMMENDED_LOCAL_OCR_NAME
             observation_text = ocr_text
             if observation_text:
                 result["perception_route"] = "ocr"
@@ -1233,9 +1298,9 @@ class ComputerUseService:
             raise RuntimeError("Selected model does not declare tools capability in Ollama")
         has_perception_fallback = bool(status_payload.get("ocr", {}).get("available"))
         has_browser_observation = bool(status_payload.get("controlled_browser_available"))
-        if "vision" not in official_caps and not has_perception_fallback and not has_browser_observation:
+        if not _supports_direct_visual_route(official_caps) and not has_perception_fallback and not has_browser_observation:
             raise RuntimeError(
-                "Selected model does not support vision, and neither OCR nor controlled browser observation is available. "
+                "Selected model does not declare a usable direct visual capability, and no OCR fallback or controlled browser observation is available. "
                 f"Install an Ollama OCR model (recommended: {RECOMMENDED_OCR_MODEL}), install Tesseract OCR, "
                 "or run inside the desktop app with controlled browser support."
             )
@@ -1584,16 +1649,64 @@ class ComputerUseService:
         if not _is_hands_free_mode(session_row.get("approval_mode")):
             await computer_helper_client.hide_status_hud()
             return
-        if next_status == "idle":
+        if next_status == "idle" or next_status in TERMINAL_SESSION_STATUSES:
             await computer_helper_client.hide_status_hud()
             return
-        goal = _truncate(str(session_row.get("goal") or "").strip(), 84)
-        error_text = _truncate(str(session_row.get("error") or "").strip(), 120)
-        detail_text = detail or error_text or goal or "正在处理当前任务"
+        full_session = await self.get_session(str(session_row["id"]))
+        goal = _truncate(str(session_row.get("goal") or "").strip(), 92)
+        error_text = _truncate(str(session_row.get("error") or "").strip(), 140)
+        actions = full_session.get("actions") or []
+        approvals = full_session.get("approvals") or []
+        latest_action = actions[-1] if actions else None
+        latest_output = latest_action.get("output_payload") if isinstance(latest_action, dict) else {}
+        latest_result_text = _truncate(
+            str(
+                (latest_output or {}).get("summary")
+                or (latest_output or {}).get("message")
+                or (latest_output or {}).get("hint")
+                or (latest_output or {}).get("reason")
+                or (latest_output or {}).get("error")
+                or ""
+            ).strip(),
+            140,
+        )
+        detail_text = detail or latest_result_text or error_text or goal or "正在处理当前任务"
+        latest_tool = _truncate(str((latest_action or {}).get("tool_name") or "").strip(), 42)
+        action_count = len(actions)
+        pending_approval_count = sum(1 for item in approvals if item.get("status") == "pending")
+        screen_summary = _truncate(str(full_session.get("latest_screen_summary") or "").strip(), 140)
+        model_name = _truncate(str(session_row.get("model") or "").strip(), 36)
+        route_name = str((latest_output or {}).get("perception_route") or (latest_output or {}).get("locator_route") or "").strip().lower()
+        if not route_name and model_name:
+            try:
+                route_name = "visual" if _supports_direct_visual_route(await ollama_service.get_model_capabilities(str(session_row.get("model") or ""))) else "ocr"
+            except Exception:
+                route_name = ""
+        route_label = {
+            "visual": "视觉直连",
+            "ocr": "OCR 感知",
+        }.get(route_name, "待定")
+        chip_secondary_parts = [route_label, f"动作 {action_count}"]
+        if pending_approval_count:
+            chip_secondary_parts.append(f"待确认 {pending_approval_count}")
+        footer_text = screen_summary or latest_result_text or " · ".join(
+            part for part in [model_name, f"状态 {_format_session_status_label(next_status)}"] if part
+        )
         await computer_helper_client.show_status_hud(
             eyebrow="Computer Use",
             title=_format_session_status_label(next_status),
             detail=detail_text,
+            subtitle=goal,
+            chip_primary=latest_tool,
+            chip_secondary=" · ".join(chip_secondary_parts),
+            footer=footer_text,
+            stats=[
+                {"label": "模型", "value": model_name or "-"},
+                {"label": "路线", "value": route_label},
+                {"label": "步骤", "value": str(action_count)},
+                {"label": "审批", "value": str(pending_approval_count)},
+            ],
+            tone=_format_status_hud_tone(next_status),
         )
 
     async def _append_text(self, session_id: str, field_name: str, delta: str) -> None:
@@ -1932,6 +2045,8 @@ class ComputerUseService:
                 str(tool_input.get("path") or ""),
             )
             tool_input["path"] = resolved
+            if tool_name in WRITE_TOOLS and approval_mode == APPROVAL_MODE_HANDS_FREE and blocked_reason is None:
+                return risk_level, False, None, None, metadata
             reason = None if not requires_approval else "Path is outside default read scope" if tool_name in READ_ONLY_TOOLS and blocked_reason is None else "This file change requires approval"
             return risk_level, requires_approval, blocked_reason, reason, metadata
         if tool_name == "computer_type":
@@ -1959,6 +2074,9 @@ class ComputerUseService:
             command = str(tool_input.get("command") or "").strip()
             if not command:
                 return "high", True, "Command is empty", "Terminal command requires approval", metadata
+            metadata["safe_command"] = _is_safe_terminal_command(command)
+            if approval_mode == APPROVAL_MODE_HANDS_FREE and metadata["safe_command"]:
+                return "medium", False, None, None, metadata
             return "high", True, None, "Terminal command requires approval", metadata
         if tool_name in HIGH_RISK_TOOLS:
             if approval_mode == APPROVAL_MODE_HANDS_FREE and tool_name in HANDS_FREE_AUTO_APPROVED_TOOLS:
@@ -2122,12 +2240,13 @@ class ComputerUseService:
             snapshot_result, file_path = await self._capture_snapshot_artifact(session, runtime=runtime)
             if not snapshot_result.get("ok") or not file_path:
                 return snapshot_result
-            locator_model = await self._locator_model_name(session["model"])
-            if not locator_model:
-                return {"ok": False, "error": "No vision or OCR model is available to locate UI targets"}
-            locate_result = await self._locate_target_with_model(file_path, locator_model, target)
+            locator_strategy = await self._locator_strategy(session["model"])
+            if not locator_strategy:
+                return {"ok": False, "error": "No native video or OCR model is available to locate UI targets"}
+            locate_result = await self._locate_target_with_model(file_path, locator_strategy["model_name"], target)
             return {
                 **locate_result,
+                "locator_route": locator_strategy["route"],
                 "artifact_id": snapshot_result.get("artifact_id"),
                 "artifact_url": snapshot_result.get("artifact_url"),
                 "observation_text": snapshot_result.get("observation_text"),
@@ -2139,13 +2258,14 @@ class ComputerUseService:
             snapshot_result, file_path = await self._capture_snapshot_artifact(session, runtime=runtime)
             if not snapshot_result.get("ok") or not file_path:
                 return snapshot_result
-            locator_model = await self._locator_model_name(session["model"])
-            if not locator_model:
-                return {"ok": False, "error": "No vision or OCR model is available to locate UI targets"}
-            locate_result = await self._locate_target_with_model(file_path, locator_model, target)
+            locator_strategy = await self._locator_strategy(session["model"])
+            if not locator_strategy:
+                return {"ok": False, "error": "No native video or OCR model is available to locate UI targets"}
+            locate_result = await self._locate_target_with_model(file_path, locator_strategy["model_name"], target)
             if not locate_result.get("ok"):
                 return {
                     **locate_result,
+                    "locator_route": locator_strategy["route"],
                     "artifact_id": snapshot_result.get("artifact_id"),
                     "artifact_url": snapshot_result.get("artifact_url"),
                     "observation_text": snapshot_result.get("observation_text"),
@@ -2174,6 +2294,7 @@ class ComputerUseService:
                 "confidence": locate_result.get("confidence"),
                 "reason": locate_result.get("reason"),
                 "locator_model": locate_result.get("locator_model"),
+                "locator_route": locator_strategy["route"],
                 "artifact_id": snapshot_result.get("artifact_id"),
                 "artifact_url": snapshot_result.get("artifact_url"),
             }
@@ -2455,6 +2576,11 @@ class ComputerUseService:
 
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": COMPUTER_USE_SYSTEM_PROMPT},
+                *(
+                    [{"role": "system", "content": NATIVE_VIDEO_ROUTE_NOTE}]
+                    if _supports_direct_visual_route(official_caps)
+                    else [{"role": "system", "content": OCR_ROUTE_SYSTEM_NOTE}]
+                ),
                 *(
                     [{"role": "system", "content": HANDS_FREE_SYSTEM_NOTE}]
                     if _is_hands_free_mode(session.get("approval_mode"))

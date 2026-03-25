@@ -2,13 +2,14 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { modelsApi, downloadsApi } from '@/services/api';
 import { matchesRunningModel } from '@/lib/modelNames';
-import type { Model, DownloadTask, LibraryModel, LibraryModelTag } from '@/types';
+import type { Model, DownloadTask, LibraryModel, LibraryModelTag, LibraryModelsMeta } from '@/types';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 interface ModelState {
   models: Model[];
   libraryModels: LibraryModel[];
+  libraryMeta: LibraryModelsMeta | null;
   libraryTags: Record<string, LibraryModelTag[]>;
   runningModels: string[];
   residentModels: string[];
@@ -16,7 +17,7 @@ interface ModelState {
   downloadTasks: DownloadTask[];
   isLoading: boolean;
   error: string | null;
-  
+
   // Actions
   fetchModels: () => Promise<void>;
   fetchLibraryModels: (refresh?: boolean) => Promise<void>;
@@ -37,6 +38,7 @@ export const useModelStore = create<ModelState>()(
     (set, get) => ({
       models: [],
       libraryModels: [],
+      libraryMeta: null,
       libraryTags: {},
       runningModels: [],
       residentModels: [],
@@ -50,23 +52,23 @@ export const useModelStore = create<ModelState>()(
         try {
           const response = await modelsApi.list();
           set({ models: response.data.models || [], isLoading: false });
-        } catch (error) {
+        } catch {
           set({ error: 'Failed to fetch models', isLoading: false });
         }
       },
 
       fetchLibraryModels: async (refresh = false) => {
         const previous = get().libraryModels;
-        const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
         for (let attempt = 0; attempt < 3; attempt += 1) {
           try {
             const shouldRefresh = refresh || attempt > 0;
             const response = await modelsApi.listLibrary(shouldRefresh);
             const incoming: LibraryModel[] = response.data.models || [];
+            const meta: LibraryModelsMeta | null = response.data.meta || null;
 
             if (incoming.length > 0) {
-              set({ libraryModels: incoming, error: null });
+              set({ libraryModels: incoming, libraryMeta: meta, error: null });
               return;
             }
           } catch {
@@ -92,7 +94,6 @@ export const useModelStore = create<ModelState>()(
         if (!refresh && cached && cached.length > 0) {
           return cached;
         }
-        const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
         for (let attempt = 0; attempt < 3; attempt += 1) {
           try {
             const response = await modelsApi.listLibraryTags(modelName, refresh || attempt > 0);
@@ -137,9 +138,9 @@ export const useModelStore = create<ModelState>()(
       fetchRunningModels: async () => {
         try {
           const response = await modelsApi.listRunning();
-          const running = (response.data.models || []).map((m: any) => m.name).filter(Boolean);
+          const running = (response.data.models || []).map((m: { name: string }) => m.name).filter(Boolean);
           set({ runningModels: running });
-        } catch (error) {
+        } catch {
           set({ error: 'Failed to fetch running models' });
         }
       },
@@ -151,7 +152,7 @@ export const useModelStore = create<ModelState>()(
             residentModels: response.data.resident_models || [],
             autoUnloadAfterResponse: Boolean(response.data.auto_unload_after_response ?? true),
           });
-        } catch (error) {
+        } catch {
           set({ error: 'Failed to fetch residency status' });
         }
       },
@@ -172,7 +173,7 @@ export const useModelStore = create<ModelState>()(
           let unloaded = false;
           for (let attempt = 0; attempt < 6; attempt += 1) {
             const response = await modelsApi.listRunning();
-            const running = (response.data.models || []).map((m: any) => m.name).filter(Boolean);
+            const running = (response.data.models || []).map((m: { name: string }) => m.name).filter(Boolean);
             set({ runningModels: running });
 
             const stillRunning = running.some((runningName: string) =>
@@ -210,7 +211,7 @@ export const useModelStore = create<ModelState>()(
         try {
           await downloadsApi.start(modelName);
           await get().fetchDownloadTasks();
-        } catch (error) {
+        } catch {
           set({ error: 'Failed to start download' });
         }
       },
@@ -219,7 +220,7 @@ export const useModelStore = create<ModelState>()(
         try {
           const response = await downloadsApi.list();
           set({ downloadTasks: response.data.tasks || [] });
-        } catch (error) {
+        } catch {
           console.error('Failed to fetch download tasks');
         }
       },
@@ -228,7 +229,7 @@ export const useModelStore = create<ModelState>()(
         try {
           await downloadsApi.cancel(taskId);
           await get().fetchDownloadTasks();
-        } catch (error) {
+        } catch {
           set({ error: 'Failed to cancel download' });
         }
       },

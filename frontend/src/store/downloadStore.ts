@@ -67,7 +67,7 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
         ? response.data.tasks.map((task: Partial<DownloadTask> & Record<string, unknown>) => normalizeDownloadTask(task))
         : [];
       set({ tasks, error: null });
-    } catch (error) {
+    } catch {
       set({ error: 'Failed to fetch download tasks' });
     }
   },
@@ -91,7 +91,7 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
     try {
       await downloadsApi.cancel(taskId);
       await get().fetchTasks();
-    } catch (error) {
+    } catch {
       set({ error: 'Failed to cancel download' });
     }
   },

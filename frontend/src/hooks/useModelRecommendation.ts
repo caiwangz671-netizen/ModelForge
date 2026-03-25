@@ -6,30 +6,20 @@ import { useTranslation } from 'react-i18next';
 
 export interface RecommendedModel {
     model: LibraryModel;
-    bestSize: string;           // e.g. "7b" — the best-fit size variant for this hardware
-    estimatedRamGB: number;     // estimated RAM consumption in GB
-    score: number;              // 0-100
+    bestSize: string;
+    estimatedRamGB: number;
+    score: number;
     reason: string;
     tier: 'perfect' | 'good' | 'possible' | 'too_large';
+    fitRatio: number;
+    highlights: string[];
 }
 
-// ────────────────────────────────────────────────────────────────────
-// Core memory estimation model:
-//   RAM needed ≈ params_B × bytes_per_param(quant) + overhead
-//
-// For Q4_K_M (most common default): ~0.55 bytes per parameter
-// For Q5_K_M: ~0.65 bytes per parameter
-// For FP16: ~2.0 bytes per parameter
-// We use 0.6 as a practical average for default ollama quantization.
-//
-// Additional overhead for KV-cache, runtime, OS etc: ~1.5 GB
-// ────────────────────────────────────────────────────────────────────
+const BYTES_PER_PARAM = 0.6;
+const OVERHEAD_BYTES = 1.5 * 1e9;
+const OS_RESERVED_BYTES = 2 * 1e9;
+const IDEAL_MEMORY_RATIO = 0.72;
 
-const BYTES_PER_PARAM = 0.6;         // Q4_K_M average
-const OVERHEAD_BYTES = 1.5 * 1e9;    // ~1.5 GB runtime overhead
-const OS_RESERVED_BYTES = 2 * 1e9;   // ~2 GB reserved for OS
-
-/** Parse a human-readable pull count like "2.5M", "113.2K", "500" → number */
 function parsePullCount(s: string | null | undefined): number {
     if (!s) return 0;
     const trimmed = s.trim().toUpperCase();
@@ -44,33 +34,46 @@ function parsePullCount(s: string | null | undefined): number {
     }
 }
 
-/** Parse size strings like "7b", "1.5b", "70b" → billions */
 function parseSizeBillions(sizeStr: string): number | null {
     const match = sizeStr.trim().toLowerCase().match(/^([\d.]+)\s*b$/);
     if (!match) return null;
     return parseFloat(match[1]);
 }
 
-/** Estimate total RAM needed to run a model of given parameter count (in billions) */
+function parseRelativeAgeDays(value?: string | null): number | null {
+    if (!value) return null;
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) return null;
+    if (normalized === 'today') return 0;
+    if (normalized === 'yesterday') return 1;
+
+    const match = normalized.match(/^(\d+)\s+(minute|minutes|hour|hours|day|days|week|weeks|month|months|year|years)\s+ago$/);
+    if (!match) return null;
+
+    const amount = Number(match[1]);
+    const unit = match[2];
+
+    if (unit.startsWith('minute')) return Math.max(0, amount / 1440);
+    if (unit.startsWith('hour')) return amount / 24;
+    if (unit.startsWith('day')) return amount;
+    if (unit.startsWith('week')) return amount * 7;
+    if (unit.startsWith('month')) return amount * 30;
+    if (unit.startsWith('year')) return amount * 365;
+    return null;
+}
+
 function estimateRamBytes(paramBillions: number): number {
     return paramBillions * 1e9 * BYTES_PER_PARAM + OVERHEAD_BYTES;
 }
 
-/**
- * Compute available memory for model loading.
- * - If we have GPU VRAM (NVIDIA): use VRAM as primary (models run on GPU)
- * - If Apple Silicon (unified memory): use total RAM (shared)
- * - Fallback: use system RAM minus OS reserved
- */
 function computeAvailableMemory(
     hw: HardwareInfo,
     t: (key: string, options?: Record<string, unknown>) => string,
 ): {
-    totalForModel: number;   // bytes available for model
-    isGpu: boolean;          // whether we're using GPU memory
-    label: string;           // human-readable label
+    totalForModel: number;
+    isGpu: boolean;
+    label: string;
 } {
-    // NVIDIA GPU with dedicated VRAM
     if (hw.gpu_vram_bytes && hw.gpu_name && !hw.gpu_name.includes('Apple')) {
         return {
             totalForModel: hw.gpu_vram_bytes - OVERHEAD_BYTES,
@@ -81,7 +84,7 @@ function computeAvailableMemory(
             }),
         };
     }
-    // Apple Silicon unified memory — model uses unified RAM
+
     if (hw.gpu_name && (hw.gpu_name.includes('Apple') || /M[1-9]/.test(hw.gpu_name))) {
         const usable = hw.ram_total - OS_RESERVED_BYTES;
         return {
@@ -93,7 +96,7 @@ function computeAvailableMemory(
             }),
         };
     }
-    // CPU-only or unknown GPU — use system RAM
+
     return {
         totalForModel: hw.ram_total - OS_RESERVED_BYTES,
         isGpu: false,
@@ -102,42 +105,6 @@ function computeAvailableMemory(
         }),
     };
 }
-
-/**
- * For a given model with multiple size variants (e.g. "1.5b", "7b", "14b", "32b"),
- * find the largest variant that fits in available memory.
- */
-function findBestSize(
-    sizes: string[],
-    availableBytes: number,
-): { bestSize: string; paramB: number; ramNeeded: number } | null {
-    // Parse all sizes to numbers and sort ascending
-    const parsed = sizes
-        .map(s => ({ raw: s, billions: parseSizeBillions(s) }))
-        .filter((x): x is { raw: string; billions: number } => x.billions !== null)
-        .sort((a, b) => a.billions - b.billions);
-
-    if (parsed.length === 0) return null;
-
-    // Find the largest model that fits
-    let best = parsed[0]; // start with smallest as fallback
-    for (const p of parsed) {
-        const needed = estimateRamBytes(p.billions);
-        if (needed <= availableBytes) {
-            best = p; // keep upgrading as long as it fits
-        }
-    }
-
-    return {
-        bestSize: best.raw,
-        paramB: best.billions,
-        ramNeeded: estimateRamBytes(best.billions),
-    };
-}
-
-// ────────────────────────────────────────────────────────────────────
-// Browser-side hardware detection fallback (when backend API unavailable)
-// ────────────────────────────────────────────────────────────────────
 
 interface BrowserHardwareEstimate {
     ramBytes: number;
@@ -149,51 +116,37 @@ function detectBrowserHardware(
 ): BrowserHardwareEstimate {
     const ua = navigator.userAgent || '';
     const platform = navigator.platform || '';
-
-    // Detect Apple Silicon Mac
     const isMac = /Mac/.test(platform) || /Macintosh/.test(ua);
     const isARM = /ARM/.test(ua) || (isMac && typeof navigator.hardwareConcurrency === 'number');
-
-    // navigator.deviceMemory is available in some Chromium-based browsers (in GB, powers of 2, capped at 8)
     const deviceMemoryGB = (navigator as unknown as { deviceMemory?: number }).deviceMemory;
-
-    // navigator.hardwareConcurrency gives us logical CPU threads
     const cpuThreads = navigator.hardwareConcurrency || 0;
 
     if (isMac) {
-        // Apple Silicon Macs: estimate from CPU thread count (unified memory architecture)
-        // M1: 8 threads → 8/16 GB, M1 Pro/Max: 10 threads → 16-64 GB
-        // M2: 8 threads → 8-24 GB, M2 Pro/Max: 12 threads → 16-96 GB
-        // M3: 8 threads → 8-24 GB, M3 Pro: 12 threads → 18-36 GB, M3 Max: 16 threads → 36-128 GB
-        // M4: 10 threads → 16-32 GB, M4 Pro: 14 threads → 24-48 GB, M4 Max: 16 threads → 36-128 GB
         let estimatedRamGB: number;
 
         if (deviceMemoryGB && deviceMemoryGB > 0) {
-            // deviceMemory is capped at 8 in most browsers, so treat it as a floor
-            // If we see 8 GB and high thread count, likely has more
             if (deviceMemoryGB >= 8 && cpuThreads >= 14) {
-                estimatedRamGB = 48; // Likely Pro/Max with ≥48GB
+                estimatedRamGB = 48;
             } else if (deviceMemoryGB >= 8 && cpuThreads >= 10) {
-                estimatedRamGB = 32; // Likely Pro or high-end base
+                estimatedRamGB = 32;
             } else if (deviceMemoryGB >= 8) {
-                estimatedRamGB = 16; // Standard config
+                estimatedRamGB = 16;
             } else {
                 estimatedRamGB = deviceMemoryGB;
             }
         } else {
-            // No deviceMemory API — estimate from CPU threads
             if (cpuThreads >= 16) {
-                estimatedRamGB = 64; // M3/M4 Max
+                estimatedRamGB = 64;
             } else if (cpuThreads >= 14) {
-                estimatedRamGB = 48; // M4 Pro
+                estimatedRamGB = 48;
             } else if (cpuThreads >= 12) {
-                estimatedRamGB = 36; // M2/M3 Pro
+                estimatedRamGB = 36;
             } else if (cpuThreads >= 10) {
-                estimatedRamGB = 24; // M1 Pro or M4 base
+                estimatedRamGB = 24;
             } else if (cpuThreads >= 8) {
-                estimatedRamGB = 16; // M1/M2/M3 base
+                estimatedRamGB = 16;
             } else {
-                estimatedRamGB = 8;  // Older or low-end
+                estimatedRamGB = 8;
             }
         }
 
@@ -218,10 +171,8 @@ function detectBrowserHardware(
         };
     }
 
-    // Non-Mac: use deviceMemory if available
     if (deviceMemoryGB && deviceMemoryGB > 0) {
-        // deviceMemory is capped at 8 for privacy, but still useful
-        const effectiveGB = deviceMemoryGB >= 8 ? 16 : deviceMemoryGB; // assume at least 16 if maxed
+        const effectiveGB = deviceMemoryGB >= 8 ? 16 : deviceMemoryGB;
         return {
             ramBytes: effectiveGB * 1e9,
             label: t('models.recommendation.memoryLabelEstimateBrowser', {
@@ -230,14 +181,178 @@ function detectBrowserHardware(
         };
     }
 
-    // Complete fallback: assume 16GB
     return {
         ramBytes: 16 * 1e9,
         label: t('models.recommendation.memoryLabelFallback', { size: 16 }),
     };
 }
 
-// ────────────────────────────────────────────────────────────────────
+interface SizeCandidate {
+    bestSize: string;
+    paramB: number;
+    ramNeeded: number;
+    fitRatio: number;
+    fitScore: number;
+}
+
+function getPracticalityScore(paramB: number): number {
+    if (paramB <= 0.5) return 0.45;
+    if (paramB <= 3) return 0.72;
+    if (paramB <= 8) return 0.96;
+    if (paramB <= 20) return 1.0;
+    if (paramB <= 40) return 0.9;
+    if (paramB <= 72) return 0.78;
+    if (paramB <= 120) return 0.58;
+    return 0.42;
+}
+
+function findBestSize(
+    sizes: string[],
+    availableBytes: number,
+): SizeCandidate | null {
+    const parsed = sizes
+        .map((s) => ({ raw: s, billions: parseSizeBillions(s) }))
+        .filter((x): x is { raw: string; billions: number } => x.billions !== null)
+        .sort((a, b) => a.billions - b.billions);
+
+    if (parsed.length === 0) return null;
+
+    let bestCandidate: SizeCandidate | null = null;
+
+    for (const candidate of parsed) {
+        const ramNeeded = estimateRamBytes(candidate.billions);
+        const fitRatio = ramNeeded / availableBytes;
+        const qualityScore = Math.min(1, Math.log2(candidate.billions + 1) / Math.log2(128 + 1));
+        const pressureScore = fitRatio <= 1
+            ? Math.max(0, 1 - Math.abs(fitRatio - IDEAL_MEMORY_RATIO) / 0.48)
+            : Math.max(0, 1 - (fitRatio - 1) * 3.5);
+        const fitScore = (qualityScore * 0.58) + (pressureScore * 0.42);
+
+        if (!bestCandidate || fitScore > bestCandidate.fitScore) {
+            bestCandidate = {
+                bestSize: candidate.raw,
+                paramB: candidate.billions,
+                ramNeeded,
+                fitRatio,
+                fitScore,
+            };
+        }
+    }
+
+    return bestCandidate;
+}
+
+function percentileRank(value: number | null, values: number[]): number {
+    if (value === null || values.length === 0) return 0.5;
+    if (values.length === 1) return 1;
+    const sorted = [...values].sort((a, b) => a - b);
+    let rank = 0;
+    while (rank < sorted.length && sorted[rank] <= value) {
+        rank += 1;
+    }
+    return rank / sorted.length;
+}
+
+function hasAnyKeyword(text: string, keywords: string[]): boolean {
+    return keywords.some((keyword) => text.includes(keyword));
+}
+
+function analyzeModelTraits(
+    model: LibraryModel,
+    t: (key: string, options?: Record<string, unknown>) => string,
+): { traitScore: number; highlights: string[] } {
+    const description = `${model.name} ${model.description}`.toLowerCase();
+    const caps = new Set((model.capabilities || []).map((item) => item.toLowerCase()));
+    const weightedHighlights: Array<{ weight: number; label: string }> = [];
+    let score = 0.2;
+
+    const addHighlight = (weight: number, labelKey: string) => {
+        score += weight;
+        weightedHighlights.push({ weight, label: t(labelKey) });
+    };
+
+    if (caps.has('tools')) addHighlight(0.18, 'models.recommendation.highlightTools');
+    if (caps.has('thinking')) addHighlight(0.14, 'models.recommendation.highlightThinking');
+    if (caps.has('vision')) addHighlight(0.08, 'models.recommendation.highlightVision');
+
+    if (hasAnyKeyword(description, ['assistant', 'general', 'chat', 'helpful', 'everyday'])) {
+        addHighlight(0.14, 'models.recommendation.highlightGeneral');
+    }
+
+    if (hasAnyKeyword(description, ['coding', 'code', 'programming', 'agentic', 'developer'])) {
+        addHighlight(0.12, 'models.recommendation.highlightCode');
+    }
+
+    if (hasAnyKeyword(description, ['multilingual', 'translation', 'bilingual', '中文', 'english'])) {
+        addHighlight(0.08, 'models.recommendation.highlightMultilingual');
+    }
+
+    if ((model.tag_count || 0) >= 8) {
+        addHighlight(0.06, 'models.recommendation.highlightVariants');
+    }
+
+    const highlights = weightedHighlights
+        .sort((a, b) => b.weight - a.weight)
+        .map((item) => item.label)
+        .filter((label, index, array) => array.indexOf(label) === index)
+        .slice(0, 3);
+
+    return {
+        traitScore: Math.min(1, score),
+        highlights,
+    };
+}
+
+function buildReason(
+    fit: SizeCandidate,
+    availableBytes: number,
+    highlights: string[],
+    popularityPercentile: number,
+    freshnessPercentile: number,
+    t: (key: string, options?: Record<string, unknown>) => string,
+): string {
+    const reasonParts: string[] = [];
+    const ramGB = fit.ramNeeded / 1e9;
+    const freeGB = Math.max(0, (availableBytes - fit.ramNeeded) / 1e9);
+
+    if (fit.fitRatio <= 0.62) {
+        reasonParts.push(t('models.recommendation.reasonComfortableFit', {
+            size: fit.bestSize,
+            ram: ramGB.toFixed(1),
+            free: freeGB.toFixed(1),
+        }));
+    } else if (fit.fitRatio <= 0.84) {
+        reasonParts.push(t('models.recommendation.reasonBalancedFit', {
+            size: fit.bestSize,
+            ram: ramGB.toFixed(1),
+            ratio: (fit.fitRatio * 100).toFixed(0),
+        }));
+    } else if (fit.fitRatio <= 1) {
+        reasonParts.push(t('models.recommendation.reasonNearLimit', {
+            size: fit.bestSize,
+            ram: ramGB.toFixed(1),
+        }));
+    } else {
+        reasonParts.push(t('models.recommendation.reasonTooLarge', {
+            size: fit.bestSize,
+            ram: ramGB.toFixed(1),
+        }));
+    }
+
+    if (highlights.length > 0) {
+        reasonParts.push(...highlights.slice(0, 2));
+    }
+
+    if (popularityPercentile >= 0.82) {
+        reasonParts.push(t('models.recommendation.highlightPopular'));
+    }
+
+    if (freshnessPercentile >= 0.8) {
+        reasonParts.push(t('models.recommendation.highlightFresh'));
+    }
+
+    return reasonParts.join(' · ');
+}
 
 export function useModelRecommendation(libraryModels: LibraryModel[], enabled = true) {
     const { t } = useTranslation();
@@ -253,10 +368,10 @@ export function useModelRecommendation(libraryModels: LibraryModel[], enabled = 
         let cancelled = false;
 
         systemApi.hardware()
-            .then(res => {
+            .then((res) => {
                 if (!cancelled) setHardware(res.data);
             })
-            .catch(err => console.warn('Hardware API unavailable, using fallback:', err))
+            .catch((err) => console.warn('Hardware API unavailable, using fallback:', err))
             .finally(() => {
                 if (!cancelled) setLoading(false);
             });
@@ -264,100 +379,97 @@ export function useModelRecommendation(libraryModels: LibraryModel[], enabled = 
         return () => { cancelled = true; };
     }, [enabled]);
 
+    useEffect(() => {
+        if (!libraryModels.length) return;
+        if (hardware) {
+            const mem = computeAvailableMemory(hardware, t);
+            setMemoryLabel(mem.label);
+        } else {
+            const detected = detectBrowserHardware(t);
+            setMemoryLabel(detected.label);
+        }
+    }, [hardware, libraryModels.length, t]);
+
     const recommendations = useMemo<RecommendedModel[]>(() => {
         if (!libraryModels.length) return [];
 
-        // Determine available memory for model loading
         let availableBytes: number;
-        let memLabel: string;
-
         if (hardware) {
             const mem = computeAvailableMemory(hardware, t);
             availableBytes = mem.totalForModel;
-            memLabel = mem.label;
         } else {
-            // Backend unavailable — try browser-side detection
             const detected = detectBrowserHardware(t);
             availableBytes = detected.ramBytes - OS_RESERVED_BYTES;
-            memLabel = detected.label;
         }
 
-        setMemoryLabel(memLabel);
+        const pullValues = libraryModels
+            .map((model) => parsePullCount(model.pull_count))
+            .filter((value) => value > 0);
+        const freshnessValues = libraryModels
+            .map((model) => parseRelativeAgeDays(model.updated))
+            .filter((value): value is number => value !== null);
+        const tagValues = libraryModels
+            .map((model) => model.tag_count || 0)
+            .filter((value) => value > 0);
 
         const scored: RecommendedModel[] = [];
 
         for (const model of libraryModels) {
             const fit = findBestSize(model.sizes, availableBytes);
-            if (!fit) continue; // No parseable sizes, skip
+            if (!fit) continue;
 
-            const { bestSize, paramB, ramNeeded } = fit;
-            const ratio = ramNeeded / availableBytes; // how much of available memory it uses
-            const ramGB = ramNeeded / 1e9;
+            const popularity = parsePullCount(model.pull_count);
+            const popularityPercentile = percentileRank(popularity, pullValues);
+            const updatedDays = parseRelativeAgeDays(model.updated);
+            const freshnessPercentile = updatedDays === null
+                ? 0.45
+                : 1 - percentileRank(updatedDays, freshnessValues);
+            const richnessPercentile = percentileRank(model.tag_count || 0, tagValues);
+            const { traitScore, highlights } = analyzeModelTraits(model, t);
 
-            let score = 0;
-            let tier: RecommendedModel['tier'] = 'too_large';
-            let reason = '';
+            const practicalityScore = getPracticalityScore(fit.paramB);
+            const composite = (
+                fit.fitScore * 0.42
+                + practicalityScore * 0.18
+                + traitScore * 0.18
+                + popularityPercentile * 0.14
+                + freshnessPercentile * 0.05
+                + richnessPercentile * 0.03
+            );
+            const score = Math.round(composite * 100);
 
-            if (ratio <= 0.6) {
-                // Uses ≤60% of available memory — very comfortable
+            let tier: RecommendedModel['tier'];
+            if (fit.fitRatio <= 0.88 && score >= 58) {
                 tier = 'perfect';
-                // Higher params → higher quality → higher score, but within safe zone
-                score = 85 + (paramB / 100) * 5; // slight boost for larger models
-                reason = hardware
-                    ? t('models.recommendation.reasonPerfectHardware', {
-                        size: bestSize,
-                        ram: ramGB.toFixed(1),
-                        free: ((availableBytes - ramNeeded) / 1e9).toFixed(1),
-                    })
-                    : t('models.recommendation.reasonPerfectNoHardware', {
-                        size: bestSize,
-                        ram: ramGB.toFixed(1),
-                    });
-            } else if (ratio <= 0.8) {
-                // Uses 60-80% — runs well but tighter
+            } else if (fit.fitRatio <= 1.02 && score >= 44) {
                 tier = 'good';
-                score = 65 + (paramB / 100) * 3;
-                reason = hardware
-                    ? t('models.recommendation.reasonGoodHardware', {
-                        size: bestSize,
-                        ram: ramGB.toFixed(1),
-                        ratio: (ratio * 100).toFixed(0),
-                    })
-                    : t('models.recommendation.reasonGoodNoHardware', {
-                        size: bestSize,
-                        ram: ramGB.toFixed(1),
-                    });
-            } else if (ratio <= 1.0) {
-                // Uses 80-100% — might work but tight
+            } else if (fit.fitRatio <= 1.18) {
                 tier = 'possible';
-                score = 35;
-                reason = t('models.recommendation.reasonPossible', {
-                    size: bestSize,
-                    ram: ramGB.toFixed(1),
-                });
             } else {
-                // Exceeds available memory
                 tier = 'too_large';
-                score = 5;
-                reason = t('models.recommendation.reasonTooLarge', {
-                    size: bestSize,
-                    ram: ramGB.toFixed(1),
-                });
             }
 
-            // Popularity boost (normalized log scale, max +8 points)
-            const pulls = parsePullCount(model.pull_count);
-            if (pulls > 0) {
-                score += Math.min(8, Math.log10(pulls) * 1.2);
-            }
-
-            scored.push({ model, bestSize, estimatedRamGB: ramGB, score, reason, tier });
+            scored.push({
+                model,
+                bestSize: fit.bestSize,
+                estimatedRamGB: fit.ramNeeded / 1e9,
+                score,
+                reason: buildReason(
+                    fit,
+                    availableBytes,
+                    highlights,
+                    popularityPercentile,
+                    freshnessPercentile,
+                    t,
+                ),
+                tier,
+                fitRatio: fit.fitRatio,
+                highlights,
+            });
         }
 
-        // Sort by score descending
         scored.sort((a, b) => b.score - a.score);
 
-        // Deduplicate by model name
         const seen = new Set<string>();
         const deduped: RecommendedModel[] = [];
         for (const item of scored) {
@@ -370,8 +482,18 @@ export function useModelRecommendation(libraryModels: LibraryModel[], enabled = 
         return deduped;
     }, [hardware, libraryModels, t]);
 
-    const perfectModels = useMemo(() => recommendations.filter(r => r.tier === 'perfect'), [recommendations]);
-    const goodModels = useMemo(() => recommendations.filter(r => r.tier === 'good'), [recommendations]);
+    const perfectModels = useMemo(
+        () => recommendations.filter((r) => r.tier === 'perfect').slice(0, 12),
+        [recommendations],
+    );
+    const goodModels = useMemo(
+        () => recommendations.filter((r) => r.tier === 'good').slice(0, 18),
+        [recommendations],
+    );
+    const possibleModels = useMemo(
+        () => recommendations.filter((r) => r.tier === 'possible').slice(0, 24),
+        [recommendations],
+    );
 
     return {
         hardware,
@@ -380,5 +502,6 @@ export function useModelRecommendation(libraryModels: LibraryModel[], enabled = 
         recommendations,
         perfectModels,
         goodModels,
+        possibleModels,
     };
 }

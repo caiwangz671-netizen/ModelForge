@@ -4,15 +4,8 @@ from __future__ import annotations
 from typing import List, Set
 
 from app.config import get_settings
-
-
-def _normalize_model_name(name: str) -> str:
-    return (name or "").strip().lower()
-
-
-def _base_model_name(name: str) -> str:
-    normalized = _normalize_model_name(name)
-    return normalized.split(":", 1)[0]
+from app.utils.model_names import normalize_model_name as _normalize_model_name
+from app.utils.model_names import base_model_name as _base_model_name
 
 
 class ModelResidencyService:

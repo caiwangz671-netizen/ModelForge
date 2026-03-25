@@ -20,9 +20,9 @@ if (process.env.ELECTRON_RUN_AS_NODE === '1' && process.env.MODELFORGE_ELECTRON_
   process.exit(relaunch.status ?? 0);
 }
 
-const { app, BrowserWindow, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
 const net = require('net');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { startComputerHelperServer } = require('./computer-helper');
@@ -32,11 +32,20 @@ const DEFAULT_OLLAMA_HOST = 'http://127.0.0.1:11434';
 const RAW_OLLAMA_HOST = process.env.OLLAMA_HOST || DEFAULT_OLLAMA_HOST;
 const AUTO_START_OLLAMA = (process.env.MODELFORGE_AUTOSTART_OLLAMA || 'true').toLowerCase() !== 'false';
 const OLLAMA_STARTUP_TIMEOUT_MS = Number(process.env.MODELFORGE_OLLAMA_STARTUP_TIMEOUT_MS || 20000);
+const RECOMMENDED_STARTER_MODEL = 'qwen3.5:4b';
 
 let backendProcess;
 let mainWindow;
 let computerHelper;
 let reusingExistingBackend = false;
+let ollamaInstallState = {
+  status: 'idle',
+  launchedAt: null,
+  completedAt: null,
+  lastError: null,
+  command: '',
+  background: true,
+};
 
 function registerDesktopIpcHandlers() {
   ipcMain.handle('desktop:pick-directories', async (event, options = {}) => {
@@ -57,6 +66,21 @@ function registerDesktopIpcHandlers() {
     }
     return Array.isArray(result.filePaths) ? result.filePaths : [];
   });
+
+  ipcMain.handle('desktop:get-ollama-status', async () => {
+    return await getDesktopOllamaStatus();
+  });
+
+  ipcMain.handle('desktop:install-ollama', async (event, options = {}) => {
+    const background = !options || typeof options !== 'object' || options.background !== false;
+    return await startOllamaInstall({ background });
+  });
+
+  ipcMain.handle('desktop:open-external', async (event, targetUrl) => {
+    if (!targetUrl || typeof targetUrl !== 'string') return false;
+    await shell.openExternal(targetUrl);
+    return true;
+  });
 }
 
 function normalizeOllamaHost(rawHost) {
@@ -67,6 +91,7 @@ function normalizeOllamaHost(rawHost) {
 }
 
 const OLLAMA_HOST = normalizeOllamaHost(RAW_OLLAMA_HOST);
+let runtimeOllamaHost = OLLAMA_HOST;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -82,23 +107,204 @@ function canAutostartOllama(baseUrl) {
 }
 
 async function isOllamaReady(baseUrl = OLLAMA_HOST) {
-  let versionUrl = '';
-  try {
-    versionUrl = new URL('/api/version', baseUrl).toString();
-  } catch {
-    return false;
+  const candidates = Array.from(new Set([
+    normalizeOllamaHost(baseUrl),
+    DEFAULT_OLLAMA_HOST,
+    'http://localhost:11434',
+  ]));
+
+  for (const candidate of candidates) {
+    let versionUrl = '';
+    let tagsUrl = '';
+    try {
+      versionUrl = new URL('/api/version', candidate).toString();
+      tagsUrl = new URL('/api/tags', candidate).toString();
+    } catch {
+      continue;
+    }
+
+    for (const targetUrl of [versionUrl, tagsUrl]) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 1800);
+      try {
+        const response = await fetch(targetUrl, { method: 'GET', signal: controller.signal });
+        if (response.ok) {
+          return { ready: true, host: candidate };
+        }
+      } catch {
+        // Try the next probe.
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 1500);
+  return { ready: false, host: normalizeOllamaHost(baseUrl) };
+}
+
+function getOllamaDownloadUrl(platform = process.platform) {
+  switch (platform) {
+    case 'win32':
+      return 'https://ollama.com/download/windows';
+    case 'linux':
+      return 'https://ollama.com/download/linux';
+    case 'darwin':
+    default:
+      return 'https://ollama.com/download';
+  }
+}
+
+function getOllamaInstallCommand(platform = process.platform) {
+  if (platform === 'win32') {
+    return 'powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://ollama.com/install.ps1 | iex"';
+  }
+  return 'curl -fsSL https://ollama.com/install.sh | sh';
+}
+
+function commandSucceeds(command, args, extraOptions = {}) {
   try {
-    const response = await fetch(versionUrl, { method: 'GET', signal: controller.signal });
-    return response.ok;
+    const result = spawnSync(command, args, {
+      stdio: 'ignore',
+      timeout: 2000,
+      windowsHide: true,
+      ...extraOptions,
+    });
+    return result.status === 0;
   } catch {
     return false;
-  } finally {
-    clearTimeout(timeout);
   }
+}
+
+function detectOllamaInstalled() {
+  if (process.platform === 'darwin') {
+    const appCandidates = [
+      '/Applications/Ollama.app',
+      path.join(app.getPath('home'), 'Applications', 'Ollama.app'),
+    ];
+    if (appCandidates.some((candidate) => fs.existsSync(candidate))) {
+      return true;
+    }
+    if (commandSucceeds('open', ['-Ra', 'Ollama'])) {
+      return true;
+    }
+    return commandSucceeds('ollama', ['--version']);
+  }
+
+  if (process.platform === 'win32') {
+    const localAppData = process.env.LOCALAPPDATA || '';
+    const programFiles = process.env.ProgramFiles || '';
+    const candidates = [
+      path.join(localAppData, 'Programs', 'Ollama', 'Ollama.exe'),
+      path.join(programFiles, 'Ollama', 'Ollama.exe'),
+    ].filter(Boolean);
+    if (candidates.some((candidate) => fs.existsSync(candidate))) {
+      return true;
+    }
+    return commandSucceeds('where', ['ollama']);
+  }
+
+  return commandSucceeds('which', ['ollama']);
+}
+
+function updateOllamaInstallState(nextState) {
+  ollamaInstallState = {
+    ...ollamaInstallState,
+    ...nextState,
+  };
+}
+
+async function getDesktopOllamaStatus() {
+  const probe = await isOllamaReady(runtimeOllamaHost);
+  if (probe.ready) {
+    runtimeOllamaHost = probe.host;
+  }
+
+  const installed = detectOllamaInstalled();
+  if ((probe.ready || installed) && ollamaInstallState.status === 'installing') {
+    updateOllamaInstallState({
+      status: 'completed',
+      completedAt: Date.now(),
+      lastError: null,
+    });
+  }
+
+  return {
+    platform: process.platform,
+    installed,
+    running: probe.ready,
+    host: probe.host || runtimeOllamaHost,
+    install_state: ollamaInstallState.status,
+    install_started_at: ollamaInstallState.launchedAt,
+    install_completed_at: ollamaInstallState.completedAt,
+    install_command: getOllamaInstallCommand(process.platform),
+    download_url: getOllamaDownloadUrl(process.platform),
+    recommended_model: RECOMMENDED_STARTER_MODEL,
+    background: Boolean(ollamaInstallState.background),
+    last_error: ollamaInstallState.lastError,
+  };
+}
+
+function startMacOllamaInstall(command) {
+  const escapedCommand = command.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return spawnDetached('osascript', [
+    '-e',
+    `tell application "Terminal" to do script "${escapedCommand}"`,
+    '-e',
+    'tell application "Terminal" to activate',
+  ]);
+}
+
+function startWindowsOllamaInstall(command) {
+  return spawnDetached('cmd', ['/c', 'start', '', 'powershell', '-NoExit', '-ExecutionPolicy', 'Bypass', '-Command', command]);
+}
+
+function startLinuxOllamaInstall(command) {
+  const terminalCandidates = [
+    ['x-terminal-emulator', ['-e', `bash -lc '${command.replace(/'/g, `'\\''`)}'`]],
+    ['gnome-terminal', ['--', 'bash', '-lc', command]],
+    ['konsole', ['-e', 'bash', '-lc', command]],
+    ['xfce4-terminal', ['-e', `bash -lc '${command.replace(/'/g, `'\\''`)}'`]],
+    ['xterm', ['-e', `bash -lc '${command.replace(/'/g, `'\\''`)}'`]],
+  ];
+
+  for (const [binary, args] of terminalCandidates) {
+    if (spawnDetached(binary, args)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function startOllamaInstall(options = {}) {
+  const background = options.background !== false;
+  const command = getOllamaInstallCommand(process.platform);
+
+  updateOllamaInstallState({
+    status: 'installing',
+    launchedAt: Date.now(),
+    completedAt: null,
+    lastError: null,
+    command,
+    background,
+  });
+
+  let launched = false;
+  if (process.platform === 'darwin') {
+    launched = startMacOllamaInstall(command);
+  } else if (process.platform === 'win32') {
+    launched = startWindowsOllamaInstall('irm https://ollama.com/install.ps1 | iex');
+  } else {
+    launched = startLinuxOllamaInstall(command);
+  }
+
+  if (!launched) {
+    updateOllamaInstallState({
+      status: 'failed',
+      lastError: 'Failed to launch the Ollama installer command.',
+    });
+  }
+
+  return await getDesktopOllamaStatus();
 }
 
 async function isBackendReady(port = BACKEND_PORT) {
@@ -188,9 +394,13 @@ async function ensureOllamaRunning() {
   if (!AUTO_START_OLLAMA) return;
   if (!canAutostartOllama(OLLAMA_HOST)) return;
 
-  if (await isOllamaReady()) return;
+  const initialCheck = await isOllamaReady(runtimeOllamaHost);
+  if (initialCheck.ready) {
+    runtimeOllamaHost = initialCheck.host;
+    return;
+  }
 
-  console.log(`Ollama not detected at ${OLLAMA_HOST}, attempting auto-start...`);
+  console.log(`Ollama not detected at ${runtimeOllamaHost}, attempting auto-start...`);
   const launched = tryLaunchOllama();
   if (!launched) {
     console.warn('Unable to auto-start Ollama. Please make sure Ollama is installed and accessible.');
@@ -203,11 +413,18 @@ async function ensureOllamaRunning() {
   const startAt = Date.now();
 
   while (Date.now() - startAt < timeoutMs) {
-    if (await isOllamaReady()) {
-      console.log('Ollama is ready.');
+    const probe = await isOllamaReady(runtimeOllamaHost);
+    if (probe.ready) {
+      runtimeOllamaHost = probe.host;
+      console.log(`Ollama is ready at ${runtimeOllamaHost}.`);
       return;
     }
     await sleep(500);
+  }
+
+  if (!detectOllamaInstalled()) {
+    console.warn('Ollama is not installed yet. First-launch onboarding will guide the installation.');
+    return;
   }
 
   await dialog
@@ -299,7 +516,7 @@ async function startBackend() {
     ...process.env,
     BACKEND_HOST: '127.0.0.1',
     BACKEND_PORT,
-    OLLAMA_HOST,
+    OLLAMA_HOST: runtimeOllamaHost,
     DEBUG: 'false',
     CORS_ORIGINS: 'null,http://localhost:5173,http://localhost:3000',
     DATABASE_URL: `sqlite+aiosqlite:///${dbPath}`,
@@ -317,7 +534,7 @@ async function startBackend() {
 
   backendProcess.on('exit', (code, signal) => {
     backendProcess = undefined;
-    if (!app.isQuiting) {
+    if (!app.isQuitting) {
       dialog.showErrorBox(
         'Backend Exited',
         `The backend process stopped unexpectedly (code: ${code ?? 'null'}, signal: ${signal ?? 'null'}).`
@@ -396,7 +613,7 @@ function createWindow() {
   });
 }
 
-app.isQuiting = false;
+app.isQuitting = false;
 
 const singleInstanceLock = app.requestSingleInstanceLock();
 
@@ -438,7 +655,7 @@ if (!singleInstanceLock) {
 }
 
 app.on('before-quit', () => {
-  app.isQuiting = true;
+  app.isQuitting = true;
   stopBackend();
   void stopComputerHelper();
 });

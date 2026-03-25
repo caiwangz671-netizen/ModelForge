@@ -6,6 +6,7 @@
 
 @layer base {
   :root {
+    color-scheme: light;
     --background: 0 0% 100%;
     --foreground: 222.2 84% 4.9%;
     --card: 0 0% 100%;
@@ -34,30 +35,31 @@
   }
 
   .dark {
-    --background: 222 41% 7%;
-    --foreground: 210 40% 98%;
-    --card: 222 30% 11%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222 28% 11%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 218 24% 18%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 218 24% 18%;
-    --muted-foreground: 215 20% 72%;
-    --accent: 218 24% 18%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217 19% 24%;
-    --input: 217 19% 24%;
-    --ring: 212.7 26.8% 83.9%;
-    --chart-1: 220 70% 50%;
-    --chart-2: 160 60% 45%;
-    --chart-3: 30 80% 55%;
-    --chart-4: 280 65% 60%;
-    --chart-5: 340 75% 55%;
+    color-scheme: dark;
+    --background: 224 38% 7%;
+    --foreground: 210 40% 96%;
+    --card: 223 31% 10%;
+    --card-foreground: 210 40% 96%;
+    --popover: 223 31% 10%;
+    --popover-foreground: 210 40% 96%;
+    --primary: 191 92% 64%;
+    --primary-foreground: 222 47% 11%;
+    --secondary: 223 22% 15%;
+    --secondary-foreground: 210 40% 96%;
+    --muted: 223 22% 14%;
+    --muted-foreground: 217 16% 68%;
+    --accent: 224 20% 18%;
+    --accent-foreground: 210 40% 96%;
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 223 18% 21%;
+    --input: 223 18% 18%;
+    --ring: 191 92% 64%;
+    --chart-1: 191 92% 64%;
+    --chart-2: 161 63% 52%;
+    --chart-3: 36 92% 61%;
+    --chart-4: 269 83% 71%;
+    --chart-5: 339 82% 68%;
   }
 }
 
@@ -74,6 +76,11 @@
     text-rendering: optimizeLegibility;
     /* Prevent harsh mobile tap highlights */
     -webkit-tap-highlight-color: transparent;
+    background-image:
+      radial-gradient(circle at top left, hsl(var(--primary) / 0.08), transparent 28%),
+      radial-gradient(circle at 85% 0%, hsl(217 91% 60% / 0.08), transparent 24%),
+      linear-gradient(180deg, hsl(var(--background)), hsl(var(--background)));
+    background-attachment: fixed;
   }
 
   /* Smooth scrolling for the whole application */
@@ -85,6 +92,13 @@
   ::selection {
     background-color: hsl(var(--primary) / 0.2);
     color: hsl(var(--foreground));
+  }
+
+  .dark body {
+    background-image:
+      radial-gradient(circle at top left, hsl(var(--primary) / 0.12), transparent 26%),
+      radial-gradient(circle at 82% 0%, hsl(221 83% 61% / 0.12), transparent 24%),
+      linear-gradient(180deg, hsl(224 38% 7%), hsl(225 40% 6%));
   }
 }
 
@@ -134,5 +148,13 @@
   /* Noticeable but soft hover state for scrollbar */
   ::-webkit-scrollbar-thumb:hover {
     background-color: hsl(var(--muted-foreground) / 0.5);
+  }
+
+  .dark ::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--muted-foreground) / 0.22);
+  }
+
+  .dark ::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--muted-foreground) / 0.38);
   }
 }

@@ -167,10 +167,7 @@ async def update_memory(memory_id: str, request: MemoryUpdate):
 async def delete_memory(memory_id: str):
     """Delete a memory item"""
     try:
-        await execute_update(
-            "DELETE FROM memory WHERE id = ?",
-            (memory_id,)
-        )
+        await memory_service.delete_memory_item(memory_id)
         return {"message": "Memory deleted"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

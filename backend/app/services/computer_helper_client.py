@@ -156,11 +156,27 @@ class ComputerHelperClient:
         eyebrow: str = "Computer Use",
         title: str = "",
         detail: str = "",
+        subtitle: str = "",
+        chip_primary: str = "",
+        chip_secondary: str = "",
+        footer: str = "",
+        stats: Optional[list[dict[str, Any]]] = None,
+        tone: str = "",
     ) -> dict[str, Any]:
         return await self._request(
             "POST",
             "/hud/show",
-            {"eyebrow": eyebrow, "title": title, "detail": detail},
+            {
+                "eyebrow": eyebrow,
+                "title": title,
+                "detail": detail,
+                "subtitle": subtitle,
+                "chip_primary": chip_primary,
+                "chip_secondary": chip_secondary,
+                "footer": footer,
+                "stats": stats or [],
+                "tone": tone,
+            },
         )
 
     async def update_status_hud(
@@ -169,11 +185,27 @@ class ComputerHelperClient:
         eyebrow: str = "Computer Use",
         title: str = "",
         detail: str = "",
+        subtitle: str = "",
+        chip_primary: str = "",
+        chip_secondary: str = "",
+        footer: str = "",
+        stats: Optional[list[dict[str, Any]]] = None,
+        tone: str = "",
     ) -> dict[str, Any]:
         return await self._request(
             "POST",
             "/hud/update",
-            {"eyebrow": eyebrow, "title": title, "detail": detail},
+            {
+                "eyebrow": eyebrow,
+                "title": title,
+                "detail": detail,
+                "subtitle": subtitle,
+                "chip_primary": chip_primary,
+                "chip_secondary": chip_secondary,
+                "footer": footer,
+                "stats": stats or [],
+                "tone": tone,
+            },
         )
 
     async def hide_status_hud(self) -> dict[str, Any]:

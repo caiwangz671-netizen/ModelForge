@@ -20,7 +20,7 @@ interface GPTOSSMessage {
   reasoning?: string;
   analysis?: string;
   commentary?: string;
-  tool_calls?: any[];
+  tool_calls?: unknown[];
   timestamp: Date;
 }
 
@@ -151,7 +151,7 @@ export function GPTOSSChat() {
                   return updated;
                 });
               }
-            } catch (e) {
+            } catch {
               // Ignore parse errors
             }
           }

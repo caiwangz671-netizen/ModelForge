@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { chatApi } from '@/services/api';
-import type { Conversation, Message, RagReference, ToolCall, ToolCallType } from '@/types';
+import { buildAttachmentDisplayContent } from '@/lib/chatAttachments';
+import type { ChatAttachment, Conversation, Message, RagReference, ToolCall, ToolCallType } from '@/types';
 
 function normalizeToolType(rawType: unknown): ToolCallType {
   const value = String(rawType ?? '').trim();
@@ -11,69 +12,106 @@ function normalizeToolType(rawType: unknown): ToolCallType {
   return 'web_search';
 }
 
-function normalizeToolCall(raw: any): ToolCall | null {
+function normalizeToolCall(raw: unknown): ToolCall | null {
   if (!raw || typeof raw !== 'object') return null;
-  const id = String(raw.id ?? '').trim();
+  const r = raw as Record<string, unknown>;
+  const id = String(r.id ?? '').trim();
   if (!id) return null;
 
-  const statusRaw = String(raw.status ?? '').trim();
+  const statusRaw = String(r.status ?? '').trim();
   const status: ToolCall['status'] =
     statusRaw === 'pending' || statusRaw === 'running' || statusRaw === 'completed' || statusRaw === 'error'
       ? statusRaw
       : 'pending';
 
-  const inputValue = raw.input;
+  const inputValue = r.input;
   const input = (inputValue && typeof inputValue === 'object' && !Array.isArray(inputValue))
     ? inputValue as Record<string, unknown>
     : {};
 
   return {
     id,
-    type: normalizeToolType(raw.type),
-    name: String(raw.name ?? 'web_search'),
+    type: normalizeToolType(r.type),
+    name: String(r.name ?? 'web_search'),
     input,
-    output: typeof raw.output === 'string' ? raw.output : undefined,
+    output: typeof r.output === 'string' ? r.output : undefined,
     status,
-    started_at: typeof raw.started_at === 'string' ? raw.started_at : undefined,
-    completed_at: typeof raw.completed_at === 'string' ? raw.completed_at : undefined,
+    started_at: typeof r.started_at === 'string' ? r.started_at : undefined,
+    completed_at: typeof r.completed_at === 'string' ? r.completed_at : undefined,
   };
 }
 
-function normalizeMessage(raw: any): Message | null {
+function normalizeMessage(raw: unknown): Message | null {
   if (!raw || typeof raw !== 'object') return null;
-  const role = raw.role === 'system' || raw.role === 'user' || raw.role === 'assistant' ? raw.role : null;
+  const r = raw as Record<string, unknown>;
+  const role = r.role === 'system' || r.role === 'user' || r.role === 'assistant' ? r.role : null;
   if (!role) return null;
-  const content = typeof raw.content === 'string' ? raw.content : String(raw.content ?? '');
-  const ragReferences = Array.isArray(raw.rag_references)
-    ? (raw.rag_references as unknown[])
+  const content = typeof r.content === 'string' ? r.content : String(r.content ?? '');
+  const ragReferences = Array.isArray(r.rag_references)
+    ? (r.rag_references as unknown[])
       .filter((item): item is RagReference => Boolean(item) && typeof item === 'object')
     : [];
-  const toolCalls = Array.isArray(raw.tool_calls)
-    ? (raw.tool_calls as unknown[])
+  const toolCalls = Array.isArray(r.tool_calls)
+    ? (r.tool_calls as unknown[])
       .map((item) => normalizeToolCall(item))
       .filter((item: ToolCall | null): item is ToolCall => Boolean(item))
     : [];
+  const attachments = Array.isArray(r.attachments)
+    ? (r.attachments as unknown[])
+      .filter((item): item is ChatAttachment => Boolean(item) && typeof item === 'object')
+    : undefined;
   return {
-    id: raw.id ? String(raw.id) : undefined,
+    id: r.id ? String(r.id) : undefined,
     role,
     content,
-    thinking: typeof raw.thinking === 'string' ? raw.thinking : undefined,
+    thinking: typeof r.thinking === 'string' ? r.thinking : undefined,
+    attachments,
     tool_calls: toolCalls,
     rag_references: ragReferences,
-    created_at: typeof raw.created_at === 'number' ? raw.created_at : undefined,
+    created_at: typeof r.created_at === 'number' ? r.created_at : undefined,
   };
 }
 
-function normalizeConversation(raw: any): Conversation | null {
+function mergeAttachmentsIntoMessages(
+  targetMessages: Message[],
+  sourceMessages: Message[],
+): Message[] {
+  if (!targetMessages.length || !sourceMessages.length) return targetMessages;
+
+  const sourceUsersWithAttachments = sourceMessages
+    .filter((message) => message.role === 'user' && Array.isArray(message.attachments) && message.attachments.length > 0);
+  if (sourceUsersWithAttachments.length === 0) {
+    return targetMessages;
+  }
+
+  const merged = [...targetMessages];
+  let sourcePointer = sourceUsersWithAttachments.length - 1;
+
+  for (let index = merged.length - 1; index >= 0 && sourcePointer >= 0; index -= 1) {
+    if (merged[index].role !== 'user') continue;
+    const attachments = sourceUsersWithAttachments[sourcePointer]?.attachments;
+    if (!attachments || attachments.length === 0) continue;
+    merged[index] = {
+      ...merged[index],
+      attachments,
+    };
+    sourcePointer -= 1;
+  }
+
+  return merged;
+}
+
+function normalizeConversation(raw: unknown): Conversation | null {
   if (!raw || typeof raw !== 'object') return null;
-  const id = String(raw.id ?? '').trim();
+  const r = raw as Record<string, unknown>;
+  const id = String(r.id ?? '').trim();
   if (!id) return null;
 
-  const titleRaw = typeof raw.title === 'string' ? raw.title : String(raw.title ?? '');
-  const modelRaw = typeof raw.model === 'string' ? raw.model : String(raw.model ?? '');
+  const titleRaw = typeof r.title === 'string' ? r.title : String(r.title ?? '');
+  const modelRaw = typeof r.model === 'string' ? r.model : String(r.model ?? '');
 
-  const messages = Array.isArray(raw.messages)
-    ? (raw.messages as unknown[])
+  const messages = Array.isArray(r.messages)
+    ? (r.messages as unknown[])
       .map((item) => normalizeMessage(item))
       .filter((m: Message | null): m is Message => Boolean(m))
     : undefined;
@@ -82,13 +120,13 @@ function normalizeConversation(raw: any): Conversation | null {
     id,
     title: titleRaw.trim() || '新对话',
     model: modelRaw.trim(),
-    created_at: typeof raw.created_at === 'number' ? raw.created_at : Date.now() / 1000,
-    updated_at: typeof raw.updated_at === 'number' ? raw.updated_at : Date.now() / 1000,
+    created_at: typeof r.created_at === 'number' ? r.created_at : Date.now() / 1000,
+    updated_at: typeof r.updated_at === 'number' ? r.updated_at : Date.now() / 1000,
     messages,
   };
 }
 
-function normalizeConversationList(rawList: any): Conversation[] {
+function normalizeConversationList(rawList: unknown): Conversation[] {
   if (!Array.isArray(rawList)) return [];
   return (rawList as unknown[])
     .map((item) => normalizeConversation(item))
@@ -130,6 +168,7 @@ interface ChatState {
     remember?: boolean;
     web_search?: boolean;
     persist_user_message?: boolean;
+    attachments?: ChatAttachment[];
   }) => Promise<void>;
   stopStreaming: () => Promise<void>;
   clearStreaming: () => void;
@@ -194,7 +233,7 @@ export const useChatStore = create<ChatState>()(
               currentConversation: nextCurrent ?? state.currentConversation,
             };
           });
-        } catch (error) {
+        } catch {
           set({ error: 'Failed to fetch conversations' });
         }
       },
@@ -231,7 +270,7 @@ export const useChatStore = create<ChatState>()(
             messages: conversation.messages || [],
             isLoading: false,
           });
-        } catch (error) {
+        } catch {
           set({ error: 'Failed to load conversation', isLoading: false });
         }
       },
@@ -270,7 +309,7 @@ export const useChatStore = create<ChatState>()(
             } else if (pending && pending.conversation_id === conversation.id && lastMessage?.role !== 'user') {
               clearPendingGeneration();
             }
-          } catch (error) {
+          } catch {
             // If failed to load (e.g., conversation was deleted), clear it
             set({
               currentConversation: null,
@@ -345,7 +384,13 @@ export const useChatStore = create<ChatState>()(
       sendMessage: async (content: string, model: string, options = {}) => {
         const { currentConversation, messages } = get();
         const shouldPersistUserMessage = options.persist_user_message !== false;
-        const userMessage: Message = { role: 'user', content };
+        const attachments = Array.isArray(options.attachments) ? options.attachments : [];
+        const userMessageContent = buildAttachmentDisplayContent(content, attachments);
+        const userMessage: Message = {
+          role: 'user',
+          content: userMessageContent,
+          attachments: attachments.length > 0 ? attachments : undefined,
+        };
         const nextMessages = shouldPersistUserMessage ? [...messages, userMessage] : [...messages];
         const lastMessage = nextMessages[nextMessages.length - 1];
         const needsVirtualUserForApi = (
@@ -391,6 +436,7 @@ export const useChatStore = create<ChatState>()(
             messages: apiMessages,
             conversation_id: currentConversation?.id,
             ...options,
+            attachments,
           }, streamAbortController.signal);
 
           if (!response.ok) {
@@ -570,9 +616,15 @@ export const useChatStore = create<ChatState>()(
               const latest = await chatApi.getConversation(resolvedConversationId);
               const normalized = normalizeConversation(latest.data);
               if (normalized) {
+                const mergedMessages = mergeAttachmentsIntoMessages(
+                  normalized.messages || [],
+                  nextMessages,
+                );
                 set((state) => ({
                   currentConversation: normalized,
-                  messages: normalized.messages || state.messages,
+                  messages: normalized.messages && normalized.messages.length > 0
+                    ? mergedMessages
+                    : state.messages,
                 }));
                 if (normalized.messages && normalized.messages.length === 2 && !get().error) {
                   chatApi.autoGenerateTitle(

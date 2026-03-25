@@ -132,6 +132,7 @@ export function ThinkingProcess({
 }
 
 // Hook to detect if model supports thinking/reasoning
+// eslint-disable-next-line react-refresh/only-export-components
 export function useReasoningSupport(modelName: string): boolean {
   const lowerModel = modelName.toLowerCase();
   const keywordMatched = ['reason', 'reasoning', 'think', 'thinking', 'cot'].some((k) =>

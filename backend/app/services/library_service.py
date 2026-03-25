@@ -40,11 +40,12 @@ class LibraryService:
         )
         self._models_cache: List[Dict[str, Any]] = []
         self._models_cached_at = 0.0
-        self._models_cache_ttl = 300.0
+        self._models_cache_ttl = 45.0
+        self._models_source = "official-api"
 
         self._tags_cache: Dict[str, List[Dict[str, Any]]] = {}
         self._tags_cached_at: Dict[str, float] = {}
-        self._tags_cache_ttl = 180.0
+        self._tags_cache_ttl = 45.0
         self._max_retries = 3
         self._retry_backoff = 0.5
 
@@ -65,6 +66,7 @@ class LibraryService:
             if isinstance(models, list):
                 self._models_cache = [m for m in models if isinstance(m, dict)]
                 self._models_cached_at = float(payload.get("models_cached_at") or 0.0)
+                self._models_source = str(payload.get("models_source") or "official-api")
 
             tags = payload.get("tags")
             if isinstance(tags, dict):
@@ -91,6 +93,7 @@ class LibraryService:
     async def _persist_disk_cache(self) -> None:
         payload = {
             "models_cached_at": self._models_cached_at,
+            "models_source": self._models_source,
             "models": self._models_cache,
             "tags_cached_at": self._tags_cached_at,
             "tags": self._tags_cache,
@@ -143,6 +146,16 @@ class LibraryService:
         if isinstance(models, list):
             return [m for m in models if isinstance(m, dict)]
         return []
+
+    def get_models_meta(self) -> Dict[str, Any]:
+        now = time.time()
+        return {
+            "source": self._models_source,
+            "fetched_at": self._models_cached_at or None,
+            "cache_ttl_seconds": self._models_cache_ttl,
+            "cache_age_seconds": max(0.0, now - self._models_cached_at) if self._models_cached_at else None,
+            "count": len(self._models_cache),
+        }
 
     @staticmethod
     def _split_model_tag(name: str) -> tuple[str, str]:
@@ -298,27 +311,46 @@ class LibraryService:
             return self._models_cache
 
         models: List[Dict[str, Any]] = []
-        # Primary path: /api/tags is significantly more stable than scraping /library.
+        source = "official-api"
+        # Primary path: /api/tags is the most real-time official catalog source.
         try:
             models = await self._fallback_models_from_catalog()
         except Exception:
             models = []
 
-        # Best-effort enrichment from /library; do not fail the request when it times out.
+        # Best-effort enrichment from /search; the HTML there updates faster than the older /library view.
         if models:
+            try:
+                html_text = await self._request_text("/search", max_retries=1, timeout=3.5)
+                parsed = self._parse_library_models(html_text)
+                if parsed:
+                    models = self._merge_catalog_with_library(models, parsed)
+                    source = "official-api+search"
+            except Exception:
+                logger.info("Search HTML enrichment failed; serving catalog-only models")
+
             try:
                 html_text = await self._request_text("/library", max_retries=1, timeout=2.5)
                 parsed = self._parse_library_models(html_text)
                 if parsed:
                     models = self._merge_catalog_with_library(models, parsed)
+                    source = "official-api+search+library"
             except Exception:
-                logger.info("Library HTML enrichment failed; serving catalog-only models")
+                logger.info("Library HTML enrichment failed; serving merged search/catalog models")
         else:
             try:
-                html_text = await self._request_text("/library", max_retries=2, timeout=6.0)
+                html_text = await self._request_text("/search", max_retries=2, timeout=6.0)
                 models = self._parse_library_models(html_text)
+                source = "official-search"
             except Exception:
                 models = []
+            if not models:
+                try:
+                    html_text = await self._request_text("/library", max_retries=2, timeout=6.0)
+                    models = self._parse_library_models(html_text)
+                    source = "official-library"
+                except Exception:
+                    models = []
 
         if not models and self._models_cache:
             return self._models_cache
@@ -327,6 +359,7 @@ class LibraryService:
 
         self._models_cache = models
         self._models_cached_at = now
+        self._models_source = source
         await self._persist_disk_cache()
         return models
 
@@ -389,13 +422,16 @@ class LibraryService:
                 continue
 
             title_match = re.search(r'x-test-model-title[^>]*title="([^"]+)"', block)
-            name = _clean_text(title_match.group(1)) if title_match else slug
+            if title_match:
+                name = _clean_text(title_match.group(1))
+            else:
+                title_text_match = re.search(r'x-test-search-response-title>(.*?)</span>', block, re.DOTALL)
+                container_title_match = re.search(r'<div class="flex flex-col mb-1" title="([^"]+)"', block)
+                name = _clean_text((title_text_match.group(1) if title_text_match else None) or (container_title_match.group(1) if container_title_match else slug))
 
-            desc_match = re.search(
-                r'x-test-model-title.*?<p[^>]*>(.*?)</p>',
-                block,
-                re.DOTALL,
-            )
+            desc_match = re.search(r'x-test-model-title.*?<p[^>]*>(.*?)</p>', block, re.DOTALL)
+            if not desc_match:
+                desc_match = re.search(r'<p class="max-w-lg break-words[^>]*>(.*?)</p>', block, re.DOTALL)
             description = _clean_text(desc_match.group(1)) if desc_match else ""
 
             capabilities = [

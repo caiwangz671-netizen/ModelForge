@@ -24,6 +24,7 @@ export type OfficialModel = {
   ollama_capabilities?: string[];
   capabilities?: {
     supports_reasoning?: boolean;
+    supports_video?: boolean;
     supports_vision?: boolean;
     supports_ocr?: boolean;
     supports_tools?: boolean;
@@ -35,9 +36,9 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { MarkdownRenderer, StreamingMarkdownRenderer } from '@/components/MarkdownRenderer';
 import { ThinkingProcess } from '@/components/ThinkingProcess';
 import {
-  Plus, MessageSquare, Bot, User, Loader2, BookmarkPlus, ExternalLink
+  Plus, MessageSquare, Bot, User, Loader2, BookmarkPlus, ExternalLink, FileText, Image as ImageIcon
 } from 'lucide-react';
-import type { Message, RagReference } from '@/types';
+import type { ChatAttachment, Message, RagReference } from '@/types';
 import { cn } from '@/lib/utils';
 import { ChatSidebar } from '@/components/chat/ChatSidebar';
 import { ChatHeader } from '@/components/chat/ChatHeader';
@@ -75,6 +76,13 @@ function getReferenceDisplay(reference: RagReference): string {
     || (typeof reference.label === 'string' && reference.label.trim())
     || 'Reference'
   );
+}
+
+function formatAttachmentSize(size?: number): string {
+  if (!size || size <= 0) return '';
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(size < 10 * 1024 ? 1 : 0)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export function Chat() {
@@ -180,6 +188,13 @@ export function Chat() {
     loadConversation,
   } = chatStore;
 
+  const currentConversationModelInfo = llmModels.find((model) => model.name === currentConversation?.model);
+  const currentModelSupportsImageUpload = Boolean(
+    currentConversationModelInfo?.capabilities?.supports_video
+    || currentConversationModelInfo?.capabilities?.supports_vision
+    || currentConversationModelInfo?.capabilities?.supports_ocr
+  );
+
   const autoLoadEnabled = typeof window !== 'undefined' && window.localStorage.getItem('autoLoadModel') === 'true';
   const idleTimeoutMinutes = typeof window !== 'undefined'
     ? Number.parseInt(window.localStorage.getItem('idleTimeoutMinutes') || '10', 10) || 10
@@ -234,7 +249,7 @@ export function Chat() {
       </div>
 
       {/* Chat Area */}
-      <div className="flex-1 flex flex-col min-h-0 bg-card/95 backdrop-blur-sm rounded-2xl border shadow-lg shadow-black/5 overflow-hidden relative transition-all duration-300">
+      <div className="flex-1 flex flex-col min-h-0 rounded-2xl border border-border/70 bg-card/90 backdrop-blur-xl shadow-lg shadow-black/10 dark:bg-card/82 dark:shadow-black/30 overflow-hidden relative transition-all duration-300">
         {currentConversation ? (
           <>
             <ChatHeader
@@ -295,7 +310,7 @@ export function Chat() {
                             "w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ring-1",
                             message.role === 'user'
                               ? "bg-primary/15 text-primary ring-primary/25"
-                              : "bg-muted text-muted-foreground ring-border"
+                              : "bg-card/90 text-muted-foreground ring-border/80 dark:bg-muted/35"
                           )}
                         >
                           {message.role === 'user' ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
@@ -305,10 +320,66 @@ export function Chat() {
                             "max-w-[85%] rounded-2xl px-4 py-3.5 overflow-x-auto border shadow-sm",
                             message.role === 'user'
                               ? 'bg-gradient-to-br from-primary to-primary/85 text-primary-foreground border-primary/40'
-                              : 'bg-muted/65 text-foreground border-border/70'
+                              : 'bg-card/78 text-foreground border-border/70 dark:bg-card/72'
                           )}
                         >
                           <MarkdownRenderer content={message.content} enableMath={true} enableCodeHighlight={true} />
+                          {Array.isArray(message.attachments) && message.attachments.length > 0 && (
+                            <div className="mt-3 space-y-2 border-t border-current/10 pt-3">
+                              <div className={cn(
+                                'text-[11px] font-medium uppercase tracking-[0.18em]',
+                                message.role === 'user' ? 'text-primary-foreground/75' : 'text-muted-foreground',
+                              )}>
+                                {t('chat.uploadAttachment')}
+                              </div>
+                              <div className="grid gap-2 sm:grid-cols-2">
+                                {message.attachments.map((attachment: ChatAttachment) => (
+                                  <div
+                                    key={`${attachment.id}-${attachment.name}`}
+                                    className={cn(
+                                      'overflow-hidden rounded-2xl border shadow-sm',
+                                      message.role === 'user'
+                                        ? 'border-primary-foreground/15 bg-primary-foreground/10 text-primary-foreground'
+                                        : 'border-border/70 bg-background/75 text-foreground dark:bg-muted/25',
+                                    )}
+                                  >
+                                    {attachment.kind === 'image' && attachment.data && (
+                                      <div className="relative aspect-[16/10] w-full overflow-hidden bg-muted">
+                                        <img
+                                          src={`data:${attachment.mime_type && !attachment.mime_type.endsWith('/*') ? attachment.mime_type : 'image/png'};base64,${attachment.data}`}
+                                          alt={attachment.name}
+                                          className="h-full w-full object-cover"
+                                        />
+                                      </div>
+                                    )}
+                                    <div className="flex items-start gap-2 px-3 py-2">
+                                      <div className={cn(
+                                        'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl',
+                                        message.role === 'user' ? 'bg-primary-foreground/12' : 'bg-primary/12 text-primary',
+                                      )}>
+                                        {attachment.kind === 'image' ? (
+                                          <ImageIcon className="h-4 w-4" />
+                                        ) : (
+                                          <FileText className="h-4 w-4" />
+                                        )}
+                                      </div>
+                                      <div className="min-w-0 flex-1">
+                                        <div className="truncate text-xs font-medium">{attachment.name}</div>
+                                        <div className={cn(
+                                          'mt-0.5 text-[11px]',
+                                          message.role === 'user' ? 'text-primary-foreground/70' : 'text-muted-foreground',
+                                        )}>
+                                          {attachment.kind === 'image'
+                                            ? t('chat.attachmentHintVisual')
+                                            : formatAttachmentSize(attachment.size) || attachment.mime_type || 'text/plain'}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                           {message.role === 'assistant' &&
                             Array.isArray(message.rag_references) &&
                             message.rag_references.length > 0 && (
@@ -396,10 +467,10 @@ export function Chat() {
                 {/* Streaming message */}
                 {isStreaming && streamingMessage && (
                   <div className="flex gap-3.5">
-                    <div className="w-8 h-8 rounded-full bg-muted text-muted-foreground ring-1 ring-border flex items-center justify-center flex-shrink-0">
+                    <div className="w-8 h-8 rounded-full bg-card/90 text-muted-foreground ring-1 ring-border/80 dark:bg-muted/35 flex items-center justify-center flex-shrink-0">
                       <Bot className="h-4 w-4" />
                     </div>
-                    <div className="max-w-[85%] rounded-2xl px-4 py-3.5 bg-muted/65 border border-border/70 shadow-sm overflow-x-auto">
+                    <div className="max-w-[85%] rounded-2xl px-4 py-3.5 bg-card/78 border border-border/70 shadow-sm overflow-x-auto dark:bg-card/72">
                       <StreamingMarkdownRenderer
                         content={streamingMessage}
                         enableMath={true}
@@ -428,13 +499,13 @@ export function Chat() {
               promptSuggestions={promptSuggestions}
               selectedPromptIndex={selectedPromptIndex}
               applyPromptSuggestion={applyPromptSuggestion}
-              currentConversationModel={currentConversation.model}
+              modelSupportsImageUpload={currentModelSupportsImageUpload}
               canRetryLastMessage={canRetryLastMessage}
             />
           </>
         ) : (
           <div className="flex-1 flex items-center justify-center">
-            <div className="text-center text-muted-foreground border rounded-2xl px-8 py-10 bg-card/80 shadow-sm">
+            <div className="text-center text-muted-foreground border border-border/70 rounded-2xl px-8 py-10 bg-card/82 shadow-sm dark:bg-card/78">
               <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
               <p className="text-base font-medium text-foreground">{t('chat.emptyTitle')}</p>
               <p className="text-sm mt-1">{t('chat.emptyDescription')}</p>

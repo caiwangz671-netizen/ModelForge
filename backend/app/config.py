@@ -104,20 +104,9 @@ class Settings(BaseSettings):
             return 1048576
         return parsed
 
-    @field_validator("auto_unload_after_response", mode="before")
+    @field_validator("auto_unload_after_response", "inject_runtime_time", mode="before")
     @classmethod
-    def _parse_auto_unload_after_response(cls, value):
-        if isinstance(value, str):
-            text = value.strip().lower()
-            if text in {"1", "true", "yes", "on"}:
-                return True
-            if text in {"0", "false", "no", "off"}:
-                return False
-        return bool(value)
-
-    @field_validator("inject_runtime_time", mode="before")
-    @classmethod
-    def _parse_inject_runtime_time(cls, value):
+    def _parse_bool_setting(cls, value):
         if isinstance(value, str):
             text = value.strip().lower()
             if text in {"1", "true", "yes", "on"}:

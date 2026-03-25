@@ -10,6 +10,7 @@ export interface Model {
   modified_at?: string;
   capabilities?: {
     supports_reasoning?: boolean;
+    supports_video?: boolean;
     supports_vision?: boolean;
     supports_ocr?: boolean;
     supports_tools?: boolean;
@@ -17,6 +18,7 @@ export interface Model {
     supports_code?: boolean;
     is_multilingual?: boolean;
   };
+  ollama_capabilities?: string[];
 }
 
 export interface LibraryModel {
@@ -29,6 +31,14 @@ export interface LibraryModel {
   tag_count?: number | null;
   updated?: string | null;
   library_url: string;
+}
+
+export interface LibraryModelsMeta {
+  source?: string;
+  fetched_at?: number | null;
+  cache_ttl_seconds?: number | null;
+  cache_age_seconds?: number | null;
+  count?: number | null;
 }
 
 export interface LibraryModelTag {
@@ -76,6 +86,18 @@ export interface RagReference {
   error?: string | null;
 }
 
+export type ChatAttachmentKind = 'text' | 'image';
+
+export interface ChatAttachment {
+  id: string;
+  kind: ChatAttachmentKind;
+  name: string;
+  mime_type?: string;
+  text?: string;
+  data?: string;
+  size?: number;
+}
+
 export type ToolCallType = 'web_search' | 'browser' | 'python' | 'calculator' | 'terminal';
 
 export interface ToolCall {
@@ -94,6 +116,7 @@ export interface Message {
   role: 'system' | 'user' | 'assistant';
   content: string;
   thinking?: string;
+  attachments?: ChatAttachment[];
   tool_calls?: ToolCall[];
   rag_references?: RagReference[];
   created_at?: number;

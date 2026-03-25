@@ -11,6 +11,7 @@ import { Settings } from '@/pages/Settings';
 import { ComputerUse } from '@/pages/ComputerUse';
 import { MathTest } from '@/components/MathTest';
 import { Toaster } from '@/components/ui/toaster';
+import { FirstLaunchGuide } from '@/components/onboarding/FirstLaunchGuide';
 
 function AnimatedRoutes() {
   const location = useLocation();
@@ -39,6 +40,7 @@ function App() {
       <Layout>
         <AnimatedRoutes />
       </Layout>
+      <FirstLaunchGuide />
       <Toaster />
     </Router>
   );

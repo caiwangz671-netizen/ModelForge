@@ -21,6 +21,7 @@ export function useAutoModelManager({
     currentModel,
 }: AutoModelManagerOptions) {
     const { runningModels, residentModels, loadModel, unloadModel, fetchRunningModels, fetchResidencyStatus } = useModelStore();
+    // eslint-disable-next-line react-hooks/purity
     const lastActivityRef = useRef<number>(Date.now());
     const idleTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const isResidentModel = useCallback((modelName: string, residents: string[]) => {

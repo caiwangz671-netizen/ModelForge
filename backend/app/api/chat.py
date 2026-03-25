@@ -2,8 +2,9 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import Any, Optional, List, Union
+from typing import Any, Optional, List, Union, Literal
 from datetime import datetime, timezone
+import base64
 import json
 import re
 import time
@@ -15,6 +16,7 @@ from app.services.chat_service import ChatService
 from app.services.memory_service import memory_service
 from app.services.model_capabilities import ModelCapabilityService
 from app.services.model_residency_service import model_residency_service
+from app.services.prompt_service import PromptService
 from app.services.web_search_service import web_search_service
 from app.config import get_settings
 
@@ -78,14 +80,31 @@ WEB_READ_TOOL_SCHEMA = {
 TOOL_SCHEMAS = [WEB_SEARCH_TOOL_SCHEMA, WEB_READ_TOOL_SCHEMA]
 
 
+def _truncate(text: Any, limit: int = 4000) -> str:
+    value = str(text or "")
+    if limit <= 0 or len(value) <= limit:
+        return value
+    return value[: max(limit - 1, 0)].rstrip() + "…"
+
+
 class ChatMessage(BaseModel):
     role: str  # "system", "user", "assistant"
     content: str
 
 
+class ChatAttachment(BaseModel):
+    kind: Literal["text", "image"]
+    name: str
+    mime_type: Optional[str] = None
+    text: Optional[str] = None
+    data: Optional[str] = None
+    size: Optional[int] = None
+
+
 class ChatRequest(BaseModel):
     model: str
     messages: List[ChatMessage]
+    attachments: Optional[List[ChatAttachment]] = None
     system: Optional[str] = None
     temperature: Optional[float] = 0.7
     top_p: Optional[float] = 0.9
@@ -144,63 +163,6 @@ def _default_think_mode(model_name: str) -> Union[bool, str]:
     if "gptoss" in model_lower.replace("-", ""):
         return "medium"
     return True
-
-
-def _format_utc_offset(offset: str) -> str:
-    if not offset:
-        return ""
-    if len(offset) == 5 and (offset.startswith("+") or offset.startswith("-")):
-        return f"{offset[:3]}:{offset[3:]}"
-    return offset
-
-
-def _build_runtime_time_system_message() -> str:
-    now_local = datetime.now().astimezone()
-    now_utc = now_local.astimezone(timezone.utc)
-    tz_name = now_local.tzname() or "Local"
-    utc_offset = _format_utc_offset(now_local.strftime("%z"))
-
-    return (
-        "Runtime time context (authoritative):\n"
-        f"- Local datetime: {now_local.strftime('%Y-%m-%d %H:%M:%S')} {tz_name} (UTC{utc_offset})\n"
-        f"- UTC datetime: {now_utc.strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
-        "When the user asks about current date/time (e.g., now/today), use this context."
-    )
-
-
-def _build_markdown_math_output_system_message() -> str:
-    return (
-        "Output formatting requirements (must follow):\n"
-        "1) Use clean Markdown for the final answer.\n"
-        "2) Math rules:\n"
-        "   - Inline math: use $...$\n"
-        "   - Display math: use $$...$$ with opening and closing $$ on separate lines\n"
-        "   - Always close math delimiters; never leave unpaired $ or $$\n"
-        "   - Do not use \\(...\\) or \\[...\\]; convert to $...$ / $$...$$\n"
-        "3) Do not put currency or normal text in math delimiters.\n"
-        "4) For lists, use Markdown lists; do not use LaTeX itemize/enumerate environments.\n"
-        "5) For code, use fenced code blocks with triple backticks.\n"
-        "6) Do not use fenced code blocks for plain words/tool names (e.g., web_search/web_read); "
-        "write them as normal text or inline code.\n"
-        "Return only the answer content."
-    )
-
-
-def _build_web_search_tool_system_message() -> str:
-    return (
-        "Tool usage policy:\n"
-        "- Use `web_search` to find candidate sources.\n"
-        "- Use `web_read` to open URLs and read actual page content before final answer.\n"
-        "- Do not claim you've read a page unless you actually called `web_read`.\n"
-        "- Do not output your internal plan (e.g. 'let me search again').\n"
-        "- If search is noisy, refine query silently and then answer succinctly.\n"
-        "- Do not fabricate citations.\n"
-        "- If tool results are irrelevant, say they are irrelevant and ask for refinement.\n"
-        "- Do not add a separate 'Sources' or 'References' section in the answer body.\n"
-        "- Do not append raw URLs or inline citation lists unless the user explicitly demands inline format.\n"
-        "- The application will render references separately at the end, together with knowledge-base citations.\n"
-        "- Focus the answer body on conclusions and evidence, not citation formatting."
-    )
 
 
 def _parse_json_dict_list(raw: object) -> List[dict]:
@@ -275,6 +237,120 @@ def _build_web_reference(read_result: dict, fallback_url: str, index: int) -> Op
         "display": display,
         "error": error,
     }
+
+
+MAX_ATTACHMENT_TEXT_CHARS = 120000
+MAX_ATTACHMENT_IMAGE_COUNT = 8
+
+
+def _normalize_attachment_name(name: Any) -> str:
+    return _truncate(str(name or "").strip(), 96) or "attachment"
+
+
+def _compose_message_content(base_content: str, attachment_note: str) -> str:
+    parts = [str(base_content or "").strip(), str(attachment_note or "").strip()]
+    return "\n\n".join(part for part in parts if part)
+
+
+def _strip_attachment_display_note(content: Any) -> str:
+    return re.sub(
+        r"\n\n\[attachments:\s*.+?\]\s*$",
+        "",
+        str(content or ""),
+        flags=re.IGNORECASE | re.DOTALL,
+    ).strip()
+
+
+def _build_attachment_context(
+    attachments: Optional[List[ChatAttachment]],
+    *,
+    supports_visual_input: bool,
+) -> dict[str, Any]:
+    display_names: list[str] = []
+    model_sections: list[str] = []
+    image_data: list[str] = []
+
+    for attachment in attachments or []:
+        kind = str(attachment.kind or "").strip().lower()
+        name = _normalize_attachment_name(attachment.name)
+
+        if kind == "text":
+            text = str(attachment.text or "").strip()
+            if not text:
+                continue
+            if len(text) > MAX_ATTACHMENT_TEXT_CHARS:
+                text = text[:MAX_ATTACHMENT_TEXT_CHARS].rstrip() + "…"
+            display_names.append(name)
+            model_sections.append(
+                f"[Text attachment: {name}] Use this user-provided text as additional context.\n{text}"
+            )
+            continue
+
+        if kind == "image":
+            if not supports_visual_input:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Image attachments require a model with visual input support",
+                )
+            data = str(attachment.data or "").strip()
+            if not data:
+                raise HTTPException(status_code=400, detail=f"Image attachment is empty: {name}")
+            if len(image_data) >= MAX_ATTACHMENT_IMAGE_COUNT:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Too many image attachments (max {MAX_ATTACHMENT_IMAGE_COUNT})",
+                )
+            try:
+                base64.b64decode(data, validate=True)
+            except Exception:
+                raise HTTPException(status_code=400, detail=f"Invalid image attachment data: {name}")
+            display_names.append(name)
+            model_sections.append(
+                f"[Attached image: {name}] An image attachment is included in this user turn via the images field. "
+                "Inspect it directly before answering. If the user asks about the image content, "
+                "do not say you cannot view it unless the attachment is truly unavailable or corrupted."
+            )
+            image_data.append(data)
+            continue
+
+        raise HTTPException(status_code=400, detail=f"Unsupported attachment type: {kind or 'unknown'}")
+
+    display_note = f"[attachments: {', '.join(display_names)}]" if display_names else ""
+    model_note = "\n\n".join(section for section in model_sections if section).strip()
+    return {
+        "display_note": display_note,
+        "model_note": model_note,
+        "images": image_data,
+    }
+
+
+def _inject_attachment_context_into_messages(
+    messages: List[dict],
+    *,
+    model_user_content: str,
+    image_data: List[str],
+) -> List[dict]:
+    prepared = [dict(message) for message in messages]
+    user_index = -1
+    for index in range(len(prepared) - 1, -1, -1):
+        role = str(prepared[index].get("role") or "").strip().lower()
+        if role == "user":
+            user_index = index
+            break
+
+    user_message: dict[str, Any]
+    if user_index >= 0:
+        user_message = prepared[user_index]
+        user_message["content"] = model_user_content
+        if image_data:
+            user_message["images"] = image_data
+    else:
+        user_message = {"role": "user", "content": model_user_content}
+        if image_data:
+            user_message["images"] = image_data
+        prepared.append(user_message)
+
+    return prepared
 
 
 def _merge_references(memory_references: List[dict], web_references: List[dict]) -> List[dict]:
@@ -450,11 +526,45 @@ def _sanitize_generated_title(raw: str) -> str:
     title = (raw or "").strip()
     if not title:
         return ""
+    parsed_main, _parsed_thinking = ChatService.parse_thinking_content(title)
+    if parsed_main:
+        title = parsed_main.strip()
     title = re.sub(r"^```[a-zA-Z0-9_-]*\n?", "", title)
     title = re.sub(r"```$", "", title).strip()
     title = title.strip().strip('"').strip("'").strip("`")
     title = title.replace("标题：", "").replace("Title:", "").replace("title:", "").strip()
-    title = title.split("\n", 1)[0].strip()
+    lines = [line.strip() for line in title.splitlines() if line.strip()]
+    if lines:
+        reasoning_prefixes = (
+            "let me think",
+            "i need to analyze",
+            "let me break this down",
+            "thinking",
+            "reasoning",
+            "analysis",
+            "thoughts",
+            "here is the title",
+            "here's the title",
+            "title suggestion",
+            "我需要分析",
+            "让我想想",
+            "让我分析",
+            "思考",
+            "推理",
+            "分析",
+            "标题建议",
+        )
+
+        def _looks_like_reasoning_line(line: str) -> bool:
+            normalized = re.sub(r"\s+", " ", line).strip().lower()
+            if not normalized:
+                return True
+            return any(normalized.startswith(prefix) for prefix in reasoning_prefixes)
+
+        filtered_lines = [line for line in lines if not _looks_like_reasoning_line(line)]
+        title = filtered_lines[0] if filtered_lines else lines[0]
+    else:
+        title = ""
     title = re.sub(r"^[\-\*\d\.\)\(]+\s*", "", title)
     title = re.sub(r"\s+", " ", title).strip()
     if len(title) > 42:
@@ -467,26 +577,36 @@ async def _generate_title_with_model(messages_dict: List[dict], model: str) -> s
     if not transcript:
         return ""
 
-    prompt = (
-        "You generate concise chat titles.\n"
-        "Rules:\n"
-        "- Use the same language as the user.\n"
-        "- Capture user goal + object, not a sentence.\n"
-        "- Chinese title: 6-16 chars. English title: 3-7 words.\n"
-        "- No quotes, no trailing punctuation, no markdown.\n"
-        "Return title only.\n\n"
-        f"Conversation:\n{transcript}\n\nTitle:"
+    prompt = PromptService.build_title_generation_user_prompt(transcript)
+
+    thinking_supported = await ollama_service.supports_thinking(model)
+    fallback_reasoning_model = ChatService.is_reasoning_model(model)
+    think_mode: Optional[bool] = None
+    if thinking_supported is True or (thinking_supported is None and fallback_reasoning_model):
+        think_mode = False
+
+    response = await ollama_service.chat_once(
+        model=model,
+        messages=[
+            {
+                "role": "system",
+                "content": PromptService.build_title_generation_system_message(),
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+        options={"temperature": 0.2, "num_predict": 32},
+        think=think_mode,
+        keep_alive="10m",
     )
 
-    title_response = ""
-    async for chunk in ollama_service.generate(
-        model=model,
-        prompt=prompt,
-        options={"temperature": 0.2, "num_predict": 32},
-    ):
-        if "response" in chunk:
-            title_response += str(chunk.get("response") or "")
+    message = response.get("message") if isinstance(response, dict) else None
+    if not isinstance(message, dict):
+        return ""
 
+    title_response = str(message.get("content") or "").strip()
     return _sanitize_generated_title(title_response)
 
 
@@ -643,6 +763,10 @@ async def delete_conversation(conversation_id: str):
     """Delete a conversation"""
     try:
         await execute_update(
+            "DELETE FROM messages WHERE conversation_id = ?",
+            (conversation_id,)
+        )
+        await execute_update(
             "DELETE FROM conversations WHERE id = ?",
             (conversation_id,)
         )
@@ -671,16 +795,18 @@ async def chat_completion(request: ChatRequest):
         # Prepare messages for Ollama and ensure conversation exists
         messages = [{"role": m.role, "content": m.content} for m in request.messages]
         await _ensure_conversation_exists(conversation_id, request.model, messages)
-        latest_user_content = request.messages[-1].content.strip() if request.messages else ""
+        base_user_content = _strip_attachment_display_note(
+            request.messages[-1].content if request.messages else ""
+        )
 
         # Memory retrieval: add relevant long-term context if embedding model is available.
         prepend_system_messages: List[dict] = []
         if settings.inject_runtime_time:
             prepend_system_messages.append(
-                {"role": "system", "content": _build_runtime_time_system_message()}
+                {"role": "system", "content": PromptService.build_runtime_time_system_message()}
             )
         prepend_system_messages.append(
-            {"role": "system", "content": _build_markdown_math_output_system_message()}
+            {"role": "system", "content": PromptService.build_chat_response_contract_system_message()}
         )
         if request.system and request.system.strip():
             prepend_system_messages.append(
@@ -689,40 +815,9 @@ async def chat_completion(request: ChatRequest):
 
         extra_context_messages: List[dict] = []
         memory_payload: dict = {"context": None, "references": []}
-        if latest_user_content:
-            memory_payload = await memory_service.build_chat_memory_payload(
-                query=latest_user_content,
-                limit=3,
-                only_when_relevant=True,
-            )
-            memory_context = memory_payload.get("context")
-            if memory_context:
-                extra_context_messages.append(
-                    {"role": "system", "content": str(memory_context)}
-                )
 
         # Check if model supports reasoning
         is_reasoning_model = ChatService.is_reasoning_model(request.model)
-
-        # Save user message unless this is a refresh-resume request.
-        now = time.time()
-        if request.persist_user_message is not False:
-            user_message_id = str(uuid.uuid4())
-            await execute_insert(
-                """INSERT INTO messages (id, conversation_id, role, content, created_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (
-                    user_message_id,
-                    conversation_id,
-                    "user",
-                    request.messages[-1].content if request.messages else "",
-                    now,
-                ),
-            )
-        await execute_update(
-            "UPDATE conversations SET updated_at = ? WHERE id = ?",
-            (now, conversation_id),
-        )
 
         options = {}
         if request.temperature is not None:
@@ -747,6 +842,51 @@ async def chat_completion(request: ChatRequest):
         try:
             official_caps = await ollama_service.get_model_capabilities(request.model)
             supports_tools = "tools" in official_caps
+            capability_info = ModelCapabilityService.analyze_model(request.model)
+            supports_visual_input = bool(
+                capability_info.supports_video
+                or capability_info.supports_vision
+                or capability_info.supports_ocr
+                or {"vision", "video", "image", "images", "ocr"} & official_caps
+            )
+            attachment_context = _build_attachment_context(
+                request.attachments,
+                supports_visual_input=supports_visual_input,
+            )
+            model_user_content = _compose_message_content(base_user_content, attachment_context["model_note"])
+            display_user_content = _compose_message_content(base_user_content, attachment_context["display_note"])
+            latest_user_content = model_user_content.strip()
+
+            if latest_user_content:
+                memory_payload = await memory_service.build_chat_memory_payload(
+                    query=latest_user_content,
+                    limit=3,
+                    only_when_relevant=True,
+                )
+                memory_context = memory_payload.get("context")
+                if memory_context:
+                    extra_context_messages.append(
+                        {"role": "system", "content": str(memory_context)}
+                    )
+
+            now = time.time()
+            if request.persist_user_message is not False:
+                user_message_id = str(uuid.uuid4())
+                await execute_insert(
+                    """INSERT INTO messages (id, conversation_id, role, content, created_at)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (
+                        user_message_id,
+                        conversation_id,
+                        "user",
+                        display_user_content,
+                        now,
+                    ),
+                )
+            await execute_update(
+                "UPDATE conversations SET updated_at = ? WHERE id = ?",
+                (now, conversation_id),
+            )
 
             official_thinking_support = await ollama_service.supports_thinking(request.model)
             fallback_reasoning_model = ChatService.is_reasoning_model(request.model)
@@ -795,10 +935,18 @@ async def chat_completion(request: ChatRequest):
 
             if tools_enabled:
                 prepend_system_messages.append(
-                    {"role": "system", "content": _build_web_search_tool_system_message()}
+                    {"role": "system", "content": PromptService.build_web_search_tool_system_message()}
                 )
 
-            model_messages = [*prepend_system_messages, *extra_context_messages, *messages]
+            model_messages = [
+                *prepend_system_messages,
+                *extra_context_messages,
+                *_inject_attachment_context_into_messages(
+                    messages,
+                    model_user_content=model_user_content,
+                    image_data=attachment_context["images"],
+                ),
+            ]
 
             assistant_visible_content = ""
             thinking_visible_content = ""
