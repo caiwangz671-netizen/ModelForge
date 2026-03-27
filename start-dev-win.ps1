@@ -1,6 +1,3 @@
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
-
 param(
   [switch]$NoInstall,
   [switch]$BackendOnly,
@@ -10,6 +7,9 @@ param(
   [string]$FrontendPort = '5173',
   [string]$OllamaHost = 'http://localhost:11434'
 )
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
 
 $RootDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BackendDir = Join-Path $RootDir 'backend'

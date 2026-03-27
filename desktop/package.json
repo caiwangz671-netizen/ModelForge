@@ -2,10 +2,12 @@
   "name": "modelforge-desktop",
   "version": "1.1.1",
   "private": true,
+  "author": "ModelForge Contributors",
   "description": "ModelForge desktop wrapper",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "generate:icon": "python ..\\scripts\\generate-desktop-icons.py",
     "package:mac": "electron-packager . ModelForge --platform=darwin --arch=arm64 --out ../release --overwrite --prune=true --app-bundle-id com.modelforge.desktop --ignore=\"^/release/\"",
     "package:win": "npx electron-builder@26.0.12 --win --x64 --publish never",
     "package:win:portable": "npx electron-builder@26.0.12 --win portable --x64 --publish never",
@@ -14,6 +16,7 @@
   "build": {
     "appId": "com.modelforge.desktop",
     "productName": "ModelForge",
+    "icon": "icon.png",
     "asar": true,
     "directories": {
       "output": "../release"
@@ -36,16 +39,23 @@
       }
     ],
     "win": {
+      "icon": "icon.ico",
       "target": [
         "nsis",
         "portable"
-      ],
-      "artifactName": "${productName}-${version}-${arch}-${target}.${ext}"
+      ]
+    },
+    "mac": {
+      "icon": "icon.icns"
     },
     "nsis": {
+      "artifactName": "${productName}-${version}-nsis.${ext}",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-${arch}-portable.${ext}"
     }
   },
   "devDependencies": {

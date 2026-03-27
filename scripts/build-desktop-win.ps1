@@ -1,11 +1,11 @@
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
-
 param(
   [string]$BackendPort = '18000',
   [string]$ElectronArch = 'x64',
   [switch]$SkipDepInstall
 )
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
 
 $RootDir = Split-Path -Parent $PSScriptRoot
 $FrontendDir = Join-Path $RootDir 'frontend'
@@ -174,7 +174,7 @@ function Package-WindowsDesktop {
 
 function Assert-WindowsArtifacts {
   $releaseItems = Get-ChildItem $ReleaseDir -ErrorAction Stop
-  $installerArtifacts = @($releaseItems | Where-Object { $_.Name -match '-nsis\.exe$' -or $_.Name -match 'setup.*\.exe$' })
+  $installerArtifacts = @($releaseItems | Where-Object { $_.Name -match '-nsis\.exe$' -or $_.Name -match 'setup.*\.exe$' -or $_.Name -match 'setup \d+.*\.exe$' })
   $portableArtifacts = @($releaseItems | Where-Object { $_.Name -match '-portable\.exe$' })
   $unpackedDir = Join-Path $ReleaseDir 'win-unpacked'
 

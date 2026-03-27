@@ -35,6 +35,8 @@ const OLLAMA_STARTUP_TIMEOUT_MS = Number(process.env.MODELFORGE_OLLAMA_STARTUP_T
 const RECOMMENDED_STARTER_MODEL = 'qwen3.5:4b';
 
 let backendProcess;
+let backendLogStream;
+let backendLogPath;
 let mainWindow;
 let computerHelper;
 let reusingExistingBackend = false;
@@ -488,6 +490,17 @@ function ensureFileExists(filePath, message) {
   }
 }
 
+function closeBackendLogStream() {
+  if (!backendLogStream) return;
+  try {
+    backendLogStream.end();
+  } catch {
+    // Ignore close failures during shutdown.
+  } finally {
+    backendLogStream = undefined;
+  }
+}
+
 async function startBackend() {
   const backendExec = resolveBackendExecutable();
   ensureFileExists(backendExec, 'Backend executable not found');
@@ -508,9 +521,15 @@ async function startBackend() {
   const dbPath = path.join(userDataDir, 'ollama_studio.db');
   const envFilePath = path.join(userDataDir, '.env');
   const computerUseDir = path.join(userDataDir, 'computer-use');
+  const logDir = path.join(userDataDir, 'logs');
 
   fs.mkdirSync(userDataDir, { recursive: true });
   fs.mkdirSync(computerUseDir, { recursive: true });
+  fs.mkdirSync(logDir, { recursive: true });
+
+  backendLogPath = path.join(logDir, 'backend.log');
+  closeBackendLogStream();
+  backendLogStream = fs.createWriteStream(backendLogPath, { flags: 'a' });
 
   const env = {
     ...process.env,
@@ -529,15 +548,21 @@ async function startBackend() {
 
   backendProcess = spawn(backendExec, [], {
     env,
-    stdio: 'inherit',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
   });
+
+  backendLogStream.write(`\n[${new Date().toISOString()}] Starting backend executable: ${backendExec}\n`);
+  backendProcess.stdout?.pipe(backendLogStream, { end: false });
+  backendProcess.stderr?.pipe(backendLogStream, { end: false });
 
   backendProcess.on('exit', (code, signal) => {
     backendProcess = undefined;
+    closeBackendLogStream();
     if (!app.isQuitting) {
       dialog.showErrorBox(
         'Backend Exited',
-        `The backend process stopped unexpectedly (code: ${code ?? 'null'}, signal: ${signal ?? 'null'}).`
+        `The backend process stopped unexpectedly (code: ${code ?? 'null'}, signal: ${signal ?? 'null'}).\n\nLog: ${backendLogPath || 'unavailable'}`
       );
       app.quit();
     }
@@ -554,7 +579,9 @@ async function startBackend() {
     }
     await sleep(500);
   }
-  throw new Error(`Backend did not become ready within ${BACKEND_STARTUP_TIMEOUT_MS / 1000}s. Check logs for details.`);
+  throw new Error(
+    `Backend did not become ready within ${BACKEND_STARTUP_TIMEOUT_MS / 1000}s. Check logs for details: ${backendLogPath || 'unavailable'}`
+  );
 }
 
 function stopBackend() {
@@ -564,7 +591,9 @@ function stopBackend() {
   }
   if (backendProcess && !backendProcess.killed) {
     backendProcess.kill('SIGTERM');
+    return;
   }
+  closeBackendLogStream();
 }
 
 async function startComputerHelper() {
