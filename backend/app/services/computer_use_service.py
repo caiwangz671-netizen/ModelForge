@@ -29,7 +29,7 @@ AUTO_TOOLS = {
     "computer_wait_for_user",
     "browser_query_state",
 }
-READ_ONLY_TOOLS = {"fs_list", "fs_read_text"}
+READ_ONLY_TOOLS = {"fs_list", "fs_list_dir", "fs_read_text"}
 WRITE_TOOLS = {"fs_write_text"}
 ACCESSIBILITY_REQUIRED_TOOLS = {
     "computer_query_state",
@@ -496,6 +496,7 @@ OCR_ROUTE_SYSTEM_NOTE = PromptService.build_computer_use_route_note(False)
 OBSERVATION_ONLY_SYSTEM_NOTE = PromptService.build_computer_use_observation_only_note()
 BROWSER_ONLY_SYSTEM_NOTE = PromptService.build_computer_use_browser_only_note()
 HANDS_FREE_SYSTEM_NOTE = PromptService.build_computer_use_hands_free_note()
+JSON_TOOL_CALL_FALLBACK_NOTE = PromptService.build_computer_use_json_tool_fallback_note()
 
 
 def _now() -> float:
@@ -811,6 +812,15 @@ def _default_allowed_paths(cwd: str) -> list[str]:
         seen.add(path)
         normalized.append(path)
     return normalized
+
+
+def _should_use_native_tool_calls(model_name: str) -> bool:
+    normalized = str(model_name or "").strip().lower()
+    # qwen3 on Ollama still intermittently truncates native tool-call JSON.
+    # Route it through our text-JSON fallback until the upstream path is stable.
+    if "qwen3" in normalized:
+        return False
+    return True
 
 
 def _normalize_approval_mode(value: Any) -> str:
@@ -1853,16 +1863,28 @@ class ComputerUseService:
         *,
         tools_enabled: bool,
         think_enabled: bool,
+        native_tool_calls_enabled: bool = True,
     ) -> tuple[str, str, list[dict[str, Any]], Optional[str]]:
         thinking_parts: list[str] = []
         content_parts: list[str] = []
         tool_calls: list[dict[str, Any]] = []
+        # Some Ollama tool-capable reasoning models, especially qwen3 variants,
+        # intermittently emit malformed partial JSON when native tool calling and
+        # thinking are enabled at the same time. Keep thinking for plain-text
+        # summary rounds, but disable it during tool rounds for stability.
+        think_flag = True if (think_enabled and not tools_enabled) else None
+        request_messages = messages
+        if tools_enabled and not native_tool_calls_enabled:
+            request_messages = [
+                *messages,
+                {"role": "system", "content": JSON_TOOL_CALL_FALLBACK_NOTE},
+            ]
         async for chunk in ollama_service.chat(
             model,
-            messages,
+            request_messages,
             options={"temperature": 0.2},
-            think=True if think_enabled else None,
-            tools=TOOL_SCHEMAS if tools_enabled else None,
+            think=think_flag,
+            tools=TOOL_SCHEMAS if (tools_enabled and native_tool_calls_enabled) else None,
         ):
             if "error" in chunk:
                 return "", "".join(thinking_parts), [], str(chunk.get("error") or "Unknown model error")
@@ -2372,7 +2394,7 @@ class ComputerUseService:
             }
         if tool_name == "terminal_exec":
             return await self._perform_terminal(session, tool_input)
-        if tool_name == "fs_list":
+        if tool_name in {"fs_list", "fs_list_dir"}:
             return await self._perform_fs_list(str(tool_input.get("path") or session["cwd"]))
         if tool_name == "fs_read_text":
             return await self._perform_fs_read(str(tool_input.get("path") or session["cwd"]))
@@ -2563,6 +2585,7 @@ class ComputerUseService:
             official_caps = await self._validate_session_request(session["model"])
             helper_status = await self.get_status()
             thinking_supported = await ollama_service.supports_thinking(session["model"])
+            native_tool_calls_enabled = _should_use_native_tool_calls(session["model"])
 
             await execute_update(
                 """
@@ -2618,6 +2641,7 @@ class ComputerUseService:
                     messages,
                     tools_enabled=True,
                     think_enabled=thinking_supported is True,
+                    native_tool_calls_enabled=native_tool_calls_enabled,
                 )
                 if error:
                     raise RuntimeError(error)
@@ -2679,6 +2703,7 @@ class ComputerUseService:
                         messages,
                         tools_enabled=False,
                         think_enabled=thinking_supported is True,
+                        native_tool_calls_enabled=native_tool_calls_enabled,
                     )
                     if summary_error:
                         raise RuntimeError(summary_error)

@@ -1,3 +1,5 @@
+const path = require('path');
+const { pathToFileURL } = require('url');
 const { BrowserWindow } = require('electron');
 
 const CONTROLLED_BROWSER_PARTITION = 'persist:modelforge-controlled-browser';
@@ -26,8 +28,11 @@ function normalizeUrl(rawUrl) {
   if (!next) {
     throw new Error('URL is required');
   }
-  if (/^https?:\/\//i.test(next)) {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(next)) {
     return next;
+  }
+  if (path.isAbsolute(next)) {
+    return pathToFileURL(next).toString();
   }
   return `https://${next}`;
 }

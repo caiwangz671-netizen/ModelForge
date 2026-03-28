@@ -78,6 +78,21 @@ class PromptService:
         )
 
     @staticmethod
+    def build_web_search_json_tool_fallback_note() -> str:
+        return (
+            "Native Ollama tool-calling is disabled for this session because the selected model family can emit unstable partial tool JSON.\n"
+            "When you need to use tools, respond with JSON only, without Markdown fences, explanation, or any extra text.\n"
+            "Allowed shapes:\n"
+            '1. {"name":"web_search","arguments":{"query":"latest OpenAI API pricing"}}\n'
+            '2. [{"name":"web_search","arguments":{"query":"BTC price today"}},{"name":"web_read","arguments":{"url":"https://example.com"}}]\n'
+            "Rules:\n"
+            "- Use `name` and `arguments` keys exactly.\n"
+            "- `arguments` must always be a JSON object.\n"
+            "- No trailing commas, comments, or prose before or after the JSON.\n"
+            "- If you are done and do not need another tool, reply with a normal user-facing answer instead of JSON."
+        )
+
+    @staticmethod
     def build_title_generation_system_message() -> str:
         return (
             "You are a title generator.\n"
@@ -105,7 +120,7 @@ class PromptService:
             "You are in ModelForge Computer Use Beta.\n"
             "Rules:\n"
             "1. Observe before acting. Your first useful tool call should usually be computer_snapshot or browser_query_state.\n"
-            "2. After every state-changing action that touches the visible UI (clicking, typing, navigating, scrolling), re-observe with computer_snapshot, computer_query_state, or browser_query_state. Exception: after pure file-system operations (fs_write_text, fs_read_text, fs_list_dir, fs_move, fs_delete) that succeeded, read the tool result directly — no snapshot needed.\n"
+            "2. After every state-changing action that touches the visible UI (clicking, typing, navigating, scrolling), re-observe with computer_snapshot, computer_query_state, or browser_query_state. Exception: after pure file-system operations (fs_write_text, fs_read_text, fs_list) that succeeded, read the tool result directly — no snapshot needed.\n"
             "3. Do not claim you saw or clicked something unless a tool confirmed it.\n"
             "4. Prefer small, reversible steps.\n"
             "5. Do not output internal planning. Only use tools and then produce concise progress updates.\n"
@@ -165,4 +180,19 @@ class PromptService:
             "Continue through normal browser and desktop navigation without asking for confirmation after each step.\n"
             "If you reach login, password, captcha, SMS verification, payment, checkout, system settings, "
             "or any other irreversible confirmation, use computer_wait_for_user instead of proceeding."
+        )
+
+    @staticmethod
+    def build_computer_use_json_tool_fallback_note() -> str:
+        return (
+            "Native Ollama tool-calling is disabled for this session because the selected model family can emit unstable partial tool JSON.\n"
+            "When you need to use tools, respond with JSON only, without Markdown fences, explanation, or any extra text.\n"
+            "Allowed shapes:\n"
+            '1. {"name":"computer_snapshot","arguments":{}}\n'
+            '2. [{"name":"computer_snapshot","arguments":{}},{"name":"browser_query_state","arguments":{}}]\n'
+            "Rules:\n"
+            "- Use `name` and `arguments` keys exactly.\n"
+            "- `arguments` must always be a JSON object.\n"
+            "- No trailing commas, comments, or prose before or after the JSON.\n"
+            "- If you are done and do not need another tool, reply with a normal concise Chinese status summary instead of JSON."
         )

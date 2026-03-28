@@ -191,6 +191,15 @@ def _parse_tool_calls(raw: object) -> List[dict]:
     return _parse_json_dict_list(raw)
 
 
+def _should_use_native_tool_calls(model_name: str) -> bool:
+    normalized = str(model_name or "").strip().lower()
+    # qwen3 on Ollama still intermittently truncates native tool-call JSON.
+    # Route it through our text-JSON fallback until the upstream path is stable.
+    if "qwen3" in normalized:
+        return False
+    return True
+
+
 def _dedupe_references(references: List[dict]) -> List[dict]:
     deduped: List[dict] = []
     seen: set[str] = set()
@@ -916,6 +925,7 @@ async def chat_completion(request: ChatRequest):
 
             web_search_requested = bool(request.web_search) and bool(latest_user_content)
             tools_enabled = web_search_requested and supports_tools
+            native_tool_calls_enabled = tools_enabled and _should_use_native_tool_calls(request.model)
 
             executed_tool_calls: List[dict] = []
             web_references: List[dict] = []
@@ -936,6 +946,10 @@ async def chat_completion(request: ChatRequest):
             if tools_enabled:
                 prepend_system_messages.append(
                     {"role": "system", "content": PromptService.build_web_search_tool_system_message()}
+                )
+            if tools_enabled and not native_tool_calls_enabled:
+                prepend_system_messages.append(
+                    {"role": "system", "content": PromptService.build_web_search_json_tool_fallback_note()}
                 )
 
             model_messages = [
@@ -969,7 +983,7 @@ async def chat_completion(request: ChatRequest):
                         options,
                         think=think_mode,
                         keep_alive=keep_alive,
-                        tools=TOOL_SCHEMAS if tools_enabled else None,
+                        tools=TOOL_SCHEMAS if native_tool_calls_enabled else None,
                     ):
                         if "error" in chunk:
                             error_text = str(chunk.get("error") or "")
