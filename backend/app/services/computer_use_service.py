@@ -569,6 +569,40 @@ def _normalize_snapshot_markdown(text: str) -> str:
     return next_text.strip()
 
 
+def _repair_json_string(text: str) -> str:
+    """Attempt to repair common malformed JSON issues from LLMs."""
+    if not text:
+        return ""
+    
+    repaired = text.strip()
+    
+    # Remove markdown code blocks if present (already partially done by caller, but for completeness)
+    if repaired.startswith("```"):
+        repaired = re.sub(r"^```(?:json)?\s*", "", repaired)
+        repaired = re.sub(r"\s*```$", "", repaired)
+    
+    # 1. Handle unescaped internal quotes: {"key": "value "with" quotes"} -> {"key": "value \"with\" quotes"}
+    # This regex looks for quotes that are not followed by , } or ] or : which usually indicates an internal quote
+    # It's a heuristic but better than failing.
+    # We use a non-greedy approach to find full string bodies and then escape internal ones.
+    def escape_internal_quotes(match):
+        content = match.group(1)
+        # Only escape if it's not already escaped
+        fixed_content = re.sub(r'(?<!\\)"', r'\"', content)
+        return f'"{fixed_content}"'
+
+    # Match property names and string values separately to avoid escaping structural quotes
+    repaired = re.sub(r'":\s*"([\s\S]*?)"(?=\s*[,}\]])', escape_internal_quotes, repaired)
+    
+    # 2. Fix common "halucinated escaping": transform \"\" to \"
+    repaired = repaired.replace('\\"\\"', '\\"')
+    
+    # 3. Strip trailing commas in objects/arrays: [1, 2, ] -> [1, 2]
+    repaired = re.sub(r',\s*([\]}])', r'\1', repaired)
+
+    return repaired
+
+
 def _extract_json_candidate(text: str) -> Optional[dict[str, Any]]:
     raw = (text or "").strip()
     if not raw:
@@ -588,7 +622,13 @@ def _extract_json_candidate(text: str) -> Optional[dict[str, Any]]:
         try:
             parsed = json.loads(candidate)
         except json.JSONDecodeError:
-            continue
+            # Try repairing the string
+            repaired = _repair_json_string(candidate)
+            try:
+                parsed = json.loads(repaired)
+            except json.JSONDecodeError:
+                continue
+        
         if isinstance(parsed, dict):
             return parsed
     return None
@@ -734,7 +774,12 @@ def _try_parse_embedded_tool_calls(raw_text: str) -> list[dict[str, Any]]:
         try:
             parsed = json.loads(candidate)
         except json.JSONDecodeError:
-            continue
+            # Try repairing the string
+            repaired = _repair_json_string(candidate)
+            try:
+                parsed = json.loads(repaired)
+            except json.JSONDecodeError:
+                continue
         payload = parsed if isinstance(parsed, list) else [parsed]
         tool_calls: list[dict[str, Any]] = []
         for item in payload:

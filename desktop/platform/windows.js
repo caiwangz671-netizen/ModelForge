@@ -19,6 +19,21 @@ function createWindowsDriver(context = {}) {
     return `'${String(value ?? '').replace(/'/g, "''")}'`;
   }
 
+  function safeParseJson(text, fallback = {}) {
+    const raw = (text || '').trim();
+    if (!raw) return fallback;
+
+    // Try finding JSON object in output (PowerShell sometimes leaks non-JSON text)
+    const match = raw.match(/\{[\s\S]*\}/);
+    const candidate = match ? match[0] : raw;
+
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      return fallback;
+    }
+  }
+
   function buildWin32Prelude() {
     return `
 if (-not ('ModelForgeWin32' -as [type])) {
@@ -294,17 +309,15 @@ try {
         return { ok: false, error: result.stderr.trim() || 'Failed to read UI state' };
       }
 
-      try {
-        const parsed = JSON.parse(String(result.stdout || '').trim() || '{}');
-        return parsed && typeof parsed === 'object'
-          ? parsed
-          : { ok: false, error: 'UI state script returned invalid JSON' };
-      } catch {
-        return {
-          ok: false,
-          error: String(result.stdout || result.stderr || '').trim() || 'UI state script returned invalid JSON',
-        };
+      const parsed = safeParseJson(result.stdout, null);
+      if (parsed && typeof parsed === 'object') {
+        return { ok: true, ...parsed };
       }
+
+      return {
+        ok: false,
+        error: String(result.stdout || result.stderr || '').trim() || 'UI state script returned invalid JSON',
+      };
     });
   }
 
@@ -415,12 +428,7 @@ try {
 } | ConvertTo-Json -Compress
       `, 10000);
 
-      let payload = null;
-      try {
-        payload = JSON.parse(String(result.stdout || '').trim() || '{}');
-      } catch {
-        payload = null;
-      }
+      const payload = safeParseJson(result.stdout, null);
       return {
         ok: result.code === 0 && payload?.ok === true,
         text_length: String(text ?? '').length,
@@ -478,15 +486,16 @@ try {
       };
     }
 
-    try {
-      return JSON.parse(String(result.stdout || '').trim() || '{}');
-    } catch {
-      return {
-        ok: false,
-        app_name: appName,
-        error: String(result.stdout || result.stderr || '').trim() || 'Failed to open application',
-      };
+    const parsed = safeParseJson(result.stdout, null);
+    if (parsed && typeof parsed === 'object') {
+      return { ok: true, ...parsed };
     }
+
+    return {
+      ok: false,
+      app_name: appName,
+      error: String(result.stdout || result.stderr || '').trim() || 'Failed to open application',
+    };
   }
 
   async function createHealthPayload() {

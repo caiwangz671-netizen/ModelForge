@@ -21,6 +21,7 @@ import { useChatStore } from '@/store/chatStore';
 import { useModelStore } from '@/store/modelStore';
 import { useDownloadStore } from '@/store/downloadStore';
 import { useComputerUseStore } from '@/store/computerUseStore';
+import logo from '@/assets/logo.png';
 
 const primaryNavItems = [
   { path: '/', labelKey: 'nav.workspace', icon: Home },
@@ -187,8 +188,9 @@ export function Layout({ children }: LayoutProps) {
       </div>
 
       {/* Mobile header */}
-      <div className="relative z-10 border-b border-border/70 bg-background/80 p-4 backdrop-blur lg:hidden">
-        <h1 className="text-xl font-bold">ModelForge</h1>
+      <div className="relative z-10 flex items-center gap-3 border-b border-border/70 bg-background/80 p-4 backdrop-blur lg:hidden">
+        <img src={logo} alt="ModelForge Logo" className="h-8 w-8 rounded-lg shadow-sm" />
+        <h1 className="text-xl font-bold tracking-tight">ModelForge</h1>
         <Button
           variant="ghost"
           size="icon"
@@ -210,8 +212,9 @@ export function Layout({ children }: LayoutProps) {
             sidebarOpen ? 'translate-x-0' : '-translate-x-full',
           )}
         >
-          <div className="p-6">
-            <h1 className="text-2xl font-bold hidden lg:block">ModelForge</h1>
+          <div className="flex items-center gap-3 p-6">
+            <img src={logo} alt="ModelForge Logo" className="h-9 w-9 rounded-xl shadow-lg ring-1 ring-white/10" />
+            <h1 className="text-2xl font-bold tracking-tight hidden lg:block">ModelForge</h1>
           </div>
 
           <div className="space-y-6 px-4">
@@ -264,7 +267,12 @@ export function Layout({ children }: LayoutProps) {
             )}
           >
             <ShellHeader
-              eyebrow="ModelForge"
+              eyebrow={
+                <div className="flex items-center gap-2">
+                  <img src={logo} alt="" className="h-4 w-4 rounded-sm" />
+                  <span>ModelForge</span>
+                </div>
+              }
               title={t(shellMeta.titleKey)}
               subtitle={t(shellMeta.subtitleKey)}
               statusLabel={shellStatus.label}

@@ -5,7 +5,6 @@ from typing import Optional
 import json
 
 from app.services.ollama import ollama_service
-from app.services.ollama_install import ollama_install_service
 from app.services.memory_service import memory_service
 from app.services.model_residency_service import model_residency_service
 from app.utils.env import upsert_env_value
@@ -61,18 +60,6 @@ async def get_version():
         return version
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/install/status")
-async def get_install_status():
-    """Get current Ollama installation status and progress"""
-    return await ollama_install_service.get_status()
-
-
-@router.post("/install/start")
-async def start_install():
-    """Trigger background Ollama installation"""
-    return await ollama_install_service.start_install()
 
 
 @router.get("/settings")

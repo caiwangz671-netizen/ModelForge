@@ -121,6 +121,8 @@ export const systemApi = {
     auto_unload_after_response?: boolean;
   }) =>
     api.put('/system/settings', data),
+  getInstallStatus: () => api.get('/system/install/status'),
+  startInstall: () => api.post('/system/install/start'),
 };
 
 export const computerUseApi = {

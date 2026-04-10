@@ -380,57 +380,44 @@
     "steps": {
       "welcome": {
         "eyebrow": "Workspace",
-        "title": "Master the Navigation",
-        "description": "The core capabilities of ModelForge are organized into Model Distribution, Fluid Chat, Desktop Automation, and System Configuration.",
+        "title": "Welcome to ModelForge",
+        "description": "The ultimate full-stack AI workstation on your desktop. We'll set up the optimized local LLM environment for a seamless chat and automation experience.",
         "points": [
-          "Deploy computing resources optimized for your hardware in the Models page.",
-          "Perform document analysis, Q&A, and knowledge accumulation in Chat.",
-          "Delegate desktop automation tasks via natural dialogue in Computer Use.",
-          "Customize visual preferences and execution policies in Settings."
-        ]
-      },
-      "chat": {
-        "eyebrow": "Intelligent Chat",
-        "title": "Optimized Dialogue",
-        "description": "The chat workflow is deeply integrated with web search, multimodal attachments, and smart summarization.",
-        "points": [
-          "Drag and drop documents for analysis; multimodal models can precisely parse images.",
-          "Automatically persist output parameters (context, tokens) for a consistent experience.",
-          "Iterate on answers instantly using the Retry feature without re-typing prompts.",
-          "When tools are supported, the AI enhances replies with real-time web search."
-        ]
-      },
-      "computerUse": {
-        "eyebrow": "Desktop Automation",
-        "title": "Agent-Driven Collaboration",
-        "description": "Ensure Screen Recording and Accessibility permissions are granted before starting your first task.",
-        "points": [
-          "Multi-mode perception: Prefers direct visual mapping with fallback overrides.",
-          "Graded approval: Intelligent risk assessment that asks for your final word on sensitive steps.",
-          "Full-stack awareness: Monitor progress via the live timeline and desktop HUD overlay.",
-          "Automated archiving: Files, previews, and screenshots are gathered in the Results panel."
-        ]
-      },
-      "settings": {
-        "eyebrow": "Customization",
-        "title": "Personalize Your Workspace",
-        "description": "Adjust visual themes and runtime defaults to fit your professional workflow.",
-        "points": [
-          "Full support for Dark/Light mode switching to match your environment.",
-          "Automated resource management: Configure auto-load, idle release, and context policies.",
-          "Advanced scope control: Pre-define default directories and file access allowlists.",
-          "Return to this guide anytime from Settings to explore new feature updates."
+          "One interface to unify all your local computing resources.",
+          "Seamless integration of web search and semantic memory.",
+          "Autonomous Desktop Agency via natural language (Computer Use).",
+          "Privacy First: All data remains securely on your local device."
         ]
       },
       "ollama": {
         "eyebrow": "Computing Engine",
         "title": "Initialize Local Environment",
-        "description": "ModelForge relies on Ollama for local execution. We will automatically configure the backend service based on your platform.",
+        "description": "ModelForge relies on Ollama for local execution. If not detected, we will automatically download and install the service in the background.",
         "points": [
-          "The app auto-detects system dependencies and triggers the appropriate setup flow.",
-          "Real-time service health is provided here; proceed once installation finishes.",
-          "Select 'Continue in Background' to explore the app while the environment prepares.",
-          "Once ready, we recommend deploying a compact general model as your first starter."
+          "The app auto-detects system dependencies and completes configuration.",
+          "Real-time progress is provided; click Next once the environment is ready.",
+          "Select 'Continue in Background' to explore while the setup finishes."
+        ]
+      },
+      "features": {
+        "eyebrow": "Key Features",
+        "title": "Discover the Capabilities",
+        "description": "From high-fidelity dialogue to desktop automation, ModelForge provides a professional toolchain for the local LLM era.",
+        "points": [
+          "Chat: Multimodal attachments, LaTeX supports, and RAG memory.",
+          "Automation: Let agents handle desktop tasks and repetitive workflows.",
+          "Model Library: Browse, download, and manage Ollama models with ease.",
+          "Telemetry: Real-time VRAM monitoring and custom execution policies."
+        ]
+      },
+      "finish": {
+        "eyebrow": "Ready for Action",
+        "title": "Start Your AI Journey",
+        "description": "Everything is ready. Now you can explore models, realize your ideas in chat, or let the agent handle the heavy lifting for you.",
+        "points": [
+          "First time? Visit the Models page to download Qwen or DeepSeek.",
+          "Grant permissions when prompted to ensure smooth automation.",
+          "Restart this guide anytime from the Settings page."
         ]
       }
     },
@@ -443,10 +430,17 @@
       "settings": "Open Settings"
     },
     "ollama": {
+      "checking": "Checking local environment...",
+      "downloading": "Downloading Ollama from official source...",
+      "downloadSpeed": "Download speed: {{speed}} KB/s",
+      "extracting": "Download complete, extracting resources...",
+      "installing": "Completing installation and starting service...",
+      "completed": "Initialization successful! Ollama is ready.",
+      "failed": "Initialization encountered an error: {{error}}",
       "installStatus": "Install status",
       "installComplete": "Install complete",
       "installFailed": "Install failed",
-      "installing": "Waiting to install or currently installing",
+      "installingStatus": "Waiting to install or currently installing",
       "installInBackground": "The install is running in the background. You can keep exploring the app while it finishes.",
       "installStatusHint": "If installation has not started yet, we will try to launch it automatically on this step.",
       "desktopStatus": "Desktop detection",

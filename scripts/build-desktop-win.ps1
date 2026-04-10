@@ -18,10 +18,35 @@ $BackendVenvDir = Join-Path $BackendDir 'venv'
 $BackendVenvPython = Join-Path $BackendVenvDir 'Scripts/python.exe'
 $BackendVenvPip = Join-Path $BackendVenvDir 'Scripts/pip.exe'
 $ElectronBuilderVersion = '26.0.12'
+$OutputEncoding = [System.Text.Encoding]::UTF8
 
 function Write-Log {
   param([string]$Message)
   Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $Message"
+}
+
+function Get-PackageMetadata {
+  $path = Join-Path $DesktopDir "package.json"
+  if (-not (Test-Path $path)) {
+    return @{ name = "modelforge"; version = "0.0.0" }
+  }
+
+  try {
+    # Using Raw and UTF8 to handle potential BOM issues in different PS versions
+    $json = Get-Content -Path $path -Raw -Encoding UTF8
+    # Strip basic comments if they exist
+    $json = $json -replace "(?m)^\s*//.*", ""
+    return $json | ConvertFrom-Json
+  } catch {
+    Write-Warning "Failed to parse package.json natively: $($_.Exception.Message)"
+    # Fallback to simple regex if JSON parsing fails on older PS versions or non-compliant files
+    $json = Get-Content -Path $path -Raw
+    $version = "0.0.0"
+    $name = "modelforge"
+    if ($json -match '"version":\s*"([^"]+)"') { $version = $matches[1] }
+    if ($json -match '"name":\s*"([^"]+)"') { $name = $matches[1] }
+    return @{ name = $name; version = $version }
+  }
 }
 
 function Require-Command {
@@ -94,6 +119,12 @@ function Ensure-BackendVenv {
     Write-Log 'Creating backend virtual environment...'
     & $pythonLauncher.Command @($pythonLauncher.Arguments + @('-m', 'venv', $BackendVenvDir))
   }
+}
+
+function Build-Icons {
+  Write-Log 'Generating branding icons...'
+  $pythonLauncher = Resolve-PythonLauncher
+  & $pythonLauncher.Command @($pythonLauncher.Arguments + @((Join-Path $RootDir 'scripts/generate-desktop-icons.py')))
 }
 
 function Build-Frontend {
@@ -206,7 +237,11 @@ function Main {
   Require-Command npm.cmd
   Require-Command npx.cmd
 
+  $metadata = Get-PackageMetadata
+  Write-Log "Starting build for $($metadata.name) v$($metadata.version) ($ElectronArch)..."
+
   Cleanup-BuildOutputs
+  Build-Icons
   Build-Frontend
   Build-BackendBinary
   Prepare-DesktopPayload

@@ -211,6 +211,10 @@ build_dmg() {
   rm -f "$app_bundle_path/Contents/Resources/default_app.asar"
   cp -R "$app_payload_dir" "$app_bundle_path/Contents/Resources/app"
 
+  # Copy branding icons
+  log "Updating application icons..."
+  cp "$DESKTOP_DIR/icon.icns" "$app_bundle_path/Contents/Resources/icon.icns"
+
   # Compatibility shim for legacy path layout used by older app builds.
   mkdir -p "$app_bundle_path/Contents/Resources/backend/dist"
   mkdir -p "$app_bundle_path/Contents/Resources/frontend"
@@ -221,6 +225,7 @@ build_dmg() {
     /usr/libexec/PlistBuddy -c "Set :CFBundleName $APP_NAME" "$plist_path" 2>/dev/null || true
     /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $APP_NAME" "$plist_path" 2>/dev/null || true
     /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $APP_BUNDLE_ID" "$plist_path" 2>/dev/null || true
+    /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile icon.icns" "$plist_path" 2>/dev/null || true
   fi
 
   if [ ! -d "$app_bundle_path" ]; then

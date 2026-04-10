@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils';
 type StatusTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger';
 
 interface ShellHeaderProps {
-  eyebrow?: string;
+  eyebrow?: React.ReactNode;
   title: string;
   subtitle: string;
   statusLabel?: string;
