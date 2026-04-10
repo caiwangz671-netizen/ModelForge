@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-from app.api import models, chat, downloads, memory, system, computer_use
+from app.api import models, chat, downloads, memory, system, computer_use, uploads
 from app.config import get_settings
 from app.services.computer_use_service import computer_use_service
 from app.services.database import init_db
@@ -47,6 +47,7 @@ app.include_router(downloads.router, prefix="/api/downloads", tags=["downloads"]
 app.include_router(memory.router, prefix="/api/memory", tags=["memory"])
 app.include_router(system.router, prefix="/api/system", tags=["system"])
 app.include_router(computer_use.router, prefix="/api/computer-use", tags=["computer-use"])
+app.include_router(uploads.router, prefix="/api/uploads", tags=["uploads"])
 
 
 @app.get("/api/health")

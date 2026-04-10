@@ -9,13 +9,12 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select';
-import { CurrentTimeContext } from '@/components/ToolUse';
-import { Loader2, Brain, Wand2, Cpu, Globe } from 'lucide-react';
-import { useHardwareMonitor } from '@/hooks/useHardwareMonitor';
-import { formatBytes } from '@/lib/utils';
+import { Loader2, Brain, Wand2, Globe } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import type { Conversation, Message } from '@/types';
 import type { OfficialModel, OfficialModelDetails } from '@/pages/Chat'; // We will export these types later or move them to types
 import { useTranslation } from 'react-i18next';
+import { formatBytes } from '@/hooks/useModels';
 
 interface ChatHeaderProps {
     currentConversation: Conversation;
@@ -30,6 +29,8 @@ interface ChatHeaderProps {
     isSwitchingModel: boolean;
     isStreaming: boolean;
     currentDetails: OfficialModelDetails | null;
+    runningModelsDetail: Record<string, { size: number; size_vram: number }>;
+    systemHardware: any | null;
     isReasoningModel: (modelName: string) => boolean;
     isThinkingEnabled: (modelName: string) => boolean;
     toggleThinking: (modelName: string) => void;
@@ -57,6 +58,8 @@ export function ChatHeader({
     isSwitchingModel,
     isStreaming,
     currentDetails,
+    runningModelsDetail,
+    systemHardware,
     isReasoningModel,
     isThinkingEnabled,
     toggleThinking,
@@ -71,11 +74,10 @@ export function ChatHeader({
     handleAutoGenerateTitle,
 }: ChatHeaderProps) {
     const currentThinkingEnabled = isThinkingEnabled(currentConversation.model);
-    const { hardwareInfo } = useHardwareMonitor(5000);
     const { t } = useTranslation();
 
     return (
-        <div className="flex items-start md:items-center justify-between gap-3 pb-3.5 border-b px-3 md:px-5 pt-3">
+        <div className="flex items-start md:items-center justify-between gap-3 border-b px-3 md:px-5 py-2.5">
             <div className="flex items-start md:items-center gap-3 flex-wrap">
                 <div className="min-w-0">
                     {editingTitle === currentConversation.id ? (
@@ -98,9 +100,9 @@ export function ChatHeader({
                             </Button>
                         </div>
                     ) : (
-                        <h2 className="font-semibold text-lg tracking-tight mb-1.5 text-foreground truncate max-w-[280px] md:max-w-[420px]">{currentConversationTitle}</h2>
+                        <h2 className="font-semibold text-base tracking-tight mb-1 text-foreground truncate max-w-[280px] md:max-w-[420px]">{currentConversationTitle}</h2>
                     )}
-                    <div className="flex items-center gap-2 flex-wrap">
+                    <div className="flex items-center gap-1.5 flex-wrap">
                         <Select
                             value={currentConversation.model}
                             onValueChange={handleSwitchConversationModel}
@@ -120,36 +122,52 @@ export function ChatHeader({
                         {isSwitchingModel && <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />}
 
                         {/* OFFICIAL OLLAMA TAGS FROM API */}
-                        {currentDetails && (
-                            <div className="hidden sm:flex items-center gap-1.5">
-                                {currentDetails.family && (
-                                    <Badge variant="secondary" className="text-[10px] h-5 px-1.5 font-normal rounded-md bg-muted/75">{currentDetails.family}</Badge>
-                                )}
-                                {currentDetails.parameter_size && (
-                                    <Badge variant="secondary" className="text-[10px] h-5 px-1.5 font-normal rounded-md bg-muted/75">{currentDetails.parameter_size}</Badge>
-                                )}
-                                {currentDetails.quantization_level && (
-                                    <Badge variant="secondary" className="text-[10px] h-5 px-1.5 font-normal rounded-md bg-muted/75">{currentDetails.quantization_level}</Badge>
-                                )}
-                            </div>
+                        {currentDetails?.parameter_size && (
+                            <Badge variant="secondary" className="hidden sm:flex text-[10px] h-5 px-1.5 font-normal rounded-md bg-muted/50 text-muted-foreground hover:bg-muted/80 transition-colors">
+                                {currentDetails.parameter_size} {currentDetails.quantization_level ? `· ${currentDetails.quantization_level}` : ''}
+                            </Badge>
                         )}
+
+                        {/* VRAM / SIZE indicator */}
+                        {runningModelsDetail[currentConversation.model] ? (
+                             <Badge variant="outline" className="hidden sm:flex text-[10px] h-5 px-1.5 font-medium rounded-md border-amber-500/30 text-amber-600 dark:text-amber-400 bg-amber-500/10 gap-1 animate-in fade-in zoom-in duration-300">
+                                <span className="relative flex h-1.5 w-1.5 mr-0.5">
+                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500"></span>
+                                </span>
+                                {formatBytes(runningModelsDetail[currentConversation.model].size_vram)} VRAM
+                             </Badge>
+                        ) : currentDetails?.parameter_size ? (
+                            <Badge variant="secondary" className="hidden sm:flex text-[10px] h-5 px-1.5 font-normal rounded-md bg-muted/40 text-muted-foreground/70">
+                                {t('models.notLoaded')}
+                            </Badge>
+                        ) : systemHardware ? (
+                            // SYSTEM TELEMETRY (show even if no model loaded)
+                            <Badge variant="outline" className="hidden sm:flex text-[10px] h-5 px-1.5 font-normal rounded-md border-muted-foreground/20 text-muted-foreground bg-muted/20 gap-1.5 transition-all">
+                                <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/40" />
+                                {t('chat.system')} {systemHardware.gpu_vram_bytes ? 'VRAM' : 'RAM'}: {systemHardware.gpu_vram_used !== null ? formatBytes(systemHardware.gpu_vram_used) : formatBytes(systemHardware.ram_used)}
+                                <span className="opacity-40">/</span>
+                                {systemHardware.gpu_vram_bytes ? formatBytes(systemHardware.gpu_vram_bytes) : formatBytes(systemHardware.ram_total)}
+                            </Badge>
+                        ) : null}
 
                         {/* Reasoning indicator */}
                         {isReasoningModel(currentConversation.model) && (
-                            <Badge variant="outline" className="text-[10px] h-5 px-1.5 font-medium bg-amber-50 text-amber-600 border-amber-200 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-800 rounded-md">
-                                <Brain className="h-3 w-3 mr-1" />
-                                {t('chat.reasoningBadge')}
-                            </Badge>
-                        )}
-                        {isReasoningModel(currentConversation.model) && (
                             <Button
                                 size="sm"
-                                variant={currentThinkingEnabled ? 'default' : 'outline'}
-                                className="h-6 px-2 text-[10px] rounded-md shadow-sm transition-transform active:scale-95"
+                                variant={currentThinkingEnabled ? 'secondary' : 'ghost'}
+                                className={cn(
+                                    "h-6 px-2 text-[10px] rounded-md transition-all active:scale-95 gap-1.5",
+                                    currentThinkingEnabled 
+                                        ? "bg-amber-500/15 text-amber-600 hover:bg-amber-500/25 border border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-400" 
+                                        : "text-muted-foreground hover:text-foreground"
+                                )}
                                 onClick={() => toggleThinking(currentConversation.model)}
                                 title={t('chat.toggleThinkingTitle')}
                             >
-                                {t('chat.thinkingLabel')}: {currentThinkingEnabled ? t('common.enabled') : t('common.disabled')}
+                                <Brain className={cn("h-3 w-3", currentThinkingEnabled && "animate-pulse")} />
+                                <span className="hidden sm:inline">{t('chat.thinkingLabel')}</span>
+                                <span className="sm:hidden">Think</span>
                             </Button>
                         )}
                         {isGptOssModel(currentConversation.model) && currentThinkingEnabled && (
@@ -165,23 +183,25 @@ export function ChatHeader({
                                 }}
                                 title={t('chat.gptOssThinkingTitle')}
                             >
-                                GPT-OSS: {gptOssThinkingLevel}
+                                <span className="text-muted-foreground">GPT-OSS:</span> {gptOssThinkingLevel}
                             </Button>
                         )}
                         <Button
                             size="sm"
-                            variant={webSearchEnabled ? 'default' : 'outline'}
-                            className="h-6 px-2 text-[10px] rounded-md shadow-sm transition-transform active:scale-95"
+                            variant={webSearchEnabled ? 'secondary' : 'ghost'}
+                            className={cn(
+                                "h-6 px-2 text-[10px] rounded-md transition-all active:scale-95 gap-1.5",
+                                webSearchEnabled 
+                                    ? "bg-blue-500/15 text-blue-600 hover:bg-blue-500/25 border border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-400" 
+                                    : "text-muted-foreground hover:text-foreground"
+                            )}
                             disabled={!currentModelSupportsTools}
                             onClick={() => setWebSearchEnabled((prev) => !prev)}
                             title={currentModelSupportsTools ? t('chat.webSearchTitle') : t('chat.webSearchUnsupportedTitle')}
                         >
-                            <Globe className="h-3 w-3 mr-1" />
-                            {t('chat.webSearch')}:
-                            {' '}
-                            {currentModelSupportsTools
-                                ? (webSearchEnabled ? t('common.enabled') : t('common.disabled'))
-                                : t('chat.webSearchUnsupportedShort')}
+                            <Globe className="h-3 w-3" />
+                            <span className="hidden sm:inline">{t('chat.webSearch')}</span>
+                            <span className="sm:hidden">Web</span>
                         </Button>
                     </div>
                 </div>
@@ -190,7 +210,7 @@ export function ChatHeader({
                     <Button
                         variant="ghost"
                         size="sm"
-                        className="h-8 w-8 p-0 rounded-full border bg-background hover:bg-primary/10 hover:text-primary transition-colors"
+                        className="h-7 w-7 p-0 rounded-full border bg-background hover:bg-primary/10 hover:text-primary transition-colors"
                         onClick={() => handleAutoGenerateTitle(currentConversation.id, messages)}
                         title={t('chat.autoGenerateTitle')}
                     >
@@ -198,22 +218,6 @@ export function ChatHeader({
                     </Button>
                 )}
                 {isGeneratingTitle && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
-            </div>
-
-            <div className="hidden md:flex items-center gap-3">
-                {hardwareInfo && (
-                    <div className="flex items-center gap-2 text-[10px] text-muted-foreground font-medium bg-muted/45 px-2 py-1.5 rounded-lg border">
-                        <Cpu className="h-3 w-3 text-primary/70" />
-                        <span>{t('settings.ram')}: {Math.round(hardwareInfo.ram_percent)}% ({formatBytes(hardwareInfo.ram_used)} / {formatBytes(hardwareInfo.ram_total)})</span>
-                        {hardwareInfo.gpu_vram_bytes !== null && (
-                            <>
-                                <span className="opacity-50">|</span>
-                                <span>{t('chat.vramAvailable')}</span>
-                            </>
-                        )}
-                    </div>
-                )}
-                <CurrentTimeContext />
             </div>
         </div>
     );

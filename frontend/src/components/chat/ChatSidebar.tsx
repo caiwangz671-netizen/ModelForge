@@ -4,7 +4,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Card, CardContent } from '@/components/ui/card';
 import { ChevronDown, ChevronRight, Plus, Trash2, MessageSquare, Edit2 } from 'lucide-react';
 import {
@@ -129,17 +128,22 @@ export function ChatSidebar({
                 </div>
 
                 {!isHistoryCollapsed && (
-                    <ScrollArea className="flex-1 min-h-0 -mx-1">
+                    <div className="flex-1 min-h-0 overflow-y-auto -mx-1 pr-1">
                         <div className="space-y-2 px-1 pb-1">
                             <AnimatePresence initial={false}>
                                 {conversations.map((conv) => (
                                     <motion.div
                                         key={conv.id}
                                         layout
-                                        initial={{ opacity: 0, x: -16 }}
-                                        animate={{ opacity: 1, x: 0 }}
-                                        exit={{ opacity: 0, x: 16, transition: { duration: 0.16 } }}
-                                        transition={{ duration: 0.18 }}
+                                        initial={{ opacity: 0, scale: 0.95, filter: 'blur(4px)' }}
+                                        animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
+                                        exit={{ opacity: 0, scale: 0.95, filter: 'blur(4px)' }}
+                                        transition={{ 
+                                            type: 'spring',
+                                            stiffness: 300,
+                                            damping: 25,
+                                            mass: 0.8 
+                                        }}
                                         className={cn(
                                             'group flex items-start justify-between gap-2 rounded-xl border px-3 py-2.5 cursor-pointer transition-all duration-200',
                                             currentConversation?.id === conv.id
@@ -231,7 +235,7 @@ export function ChatSidebar({
                                 ))}
                             </AnimatePresence>
                         </div>
-                    </ScrollArea>
+                    </div>
                 )}
             </CardContent>
 

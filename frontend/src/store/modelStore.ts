@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { modelsApi, downloadsApi } from '@/services/api';
+import { modelsApi, downloadsApi, systemApi, type HardwareInfo } from '@/services/api';
 import { matchesRunningModel } from '@/lib/modelNames';
 import type { Model, DownloadTask, LibraryModel, LibraryModelTag, LibraryModelsMeta } from '@/types';
 
@@ -12,6 +12,8 @@ interface ModelState {
   libraryMeta: LibraryModelsMeta | null;
   libraryTags: Record<string, LibraryModelTag[]>;
   runningModels: string[];
+  runningModelsDetail: Record<string, { size: number; size_vram: number }>;
+  systemHardware: HardwareInfo | null;
   residentModels: string[];
   autoUnloadAfterResponse: boolean;
   downloadTasks: DownloadTask[];
@@ -31,6 +33,7 @@ interface ModelState {
   startDownload: (modelName: string) => Promise<void>;
   fetchDownloadTasks: () => Promise<void>;
   cancelDownload: (taskId: string) => Promise<void>;
+  fetchSystemHardware: () => Promise<void>;
 }
 
 export const useModelStore = create<ModelState>()(
@@ -41,6 +44,8 @@ export const useModelStore = create<ModelState>()(
       libraryMeta: null,
       libraryTags: {},
       runningModels: [],
+      runningModelsDetail: {},
+      systemHardware: null,
       residentModels: [],
       autoUnloadAfterResponse: true,
       downloadTasks: [],
@@ -138,10 +143,30 @@ export const useModelStore = create<ModelState>()(
       fetchRunningModels: async () => {
         try {
           const response = await modelsApi.listRunning();
-          const running = (response.data.models || []).map((m: { name: string }) => m.name).filter(Boolean);
-          set({ runningModels: running });
+          const models = response.data.models || [];
+          const running = models.map((m: { name: string }) => m.name).filter(Boolean);
+          const detail: Record<string, { size: number; size_vram: number }> = {};
+          
+          models.forEach((m: { name: string; size?: number; size_vram?: number }) => {
+            if (m.name) {
+              detail[m.name] = {
+                size: m.size || 0,
+                size_vram: m.size_vram || m.size || 0
+              };
+            }
+          });
+          
+          set({ runningModels: running, runningModelsDetail: detail });
         } catch {
           set({ error: 'Failed to fetch running models' });
+        }
+      },
+      fetchSystemHardware: async () => {
+        try {
+          const response = await systemApi.hardware();
+          set({ systemHardware: response.data });
+        } catch {
+          // Silent fail for telemetry
         }
       },
 

@@ -30,6 +30,26 @@ const languageMap: Record<string, string> = {
   java: 'java',
 };
 
+// Language labels displayed in the header
+const languageDisplayNames: Record<string, string> = {
+  javascript: 'JavaScript',
+  typescript: 'TypeScript',
+  python: 'Python',
+  ruby: 'Ruby',
+  bash: 'Bash',
+  yaml: 'YAML',
+  json: 'JSON',
+  markdown: 'Markdown',
+  html: 'HTML',
+  css: 'CSS',
+  sql: 'SQL',
+  rust: 'Rust',
+  go: 'Go',
+  cpp: 'C++',
+  c: 'C',
+  java: 'Java',
+};
+
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
@@ -41,35 +61,37 @@ function escapeHtml(text: string): string {
 
 /**
  * Code Block Component with Syntax Highlighting.
- * Uses hljs.highlight() + dangerouslySetInnerHTML for React-safe, streaming-compatible highlighting.
- * Code is highlighted on every code/language change, including during streaming.
+ * Clean header with language label + copy button; no line-number gutter.
  */
 export function CodeBlock({ code, language = 'text', className }: CodeBlockProps) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
-  const displayLanguage = languageMap[language.toLowerCase()] || language;
+  const normalizedLang = languageMap[language.toLowerCase()] || language.toLowerCase();
+  const isPlainText = normalizedLang === 'text' || normalizedLang === 'plaintext';
+  const headerLabel = isPlainText ? null : (languageDisplayNames[normalizedLang] || normalizedLang);
 
-  // Start with escaped plain text; update to highlighted HTML async.
   const [highlightedHtml, setHighlightedHtml] = useState<string>(() => escapeHtml(code));
 
   useEffect(() => {
+    if (isPlainText) {
+      setHighlightedHtml(escapeHtml(code));
+      return;
+    }
     let active = true;
     import('highlight.js').then((hljs) => {
       if (!active) return;
       try {
-        const supported = hljs.default.getLanguage(displayLanguage);
+        const supported = hljs.default.getLanguage(normalizedLang);
         const result = supported
-          ? hljs.default.highlight(code, { language: displayLanguage, ignoreIllegals: true })
+          ? hljs.default.highlight(code, { language: normalizedLang, ignoreIllegals: true })
           : hljs.default.highlightAuto(code);
         setHighlightedHtml(result.value);
       } catch {
         setHighlightedHtml(escapeHtml(code));
       }
     });
-    return () => {
-      active = false;
-    };
-  }, [code, displayLanguage]);
+    return () => { active = false; };
+  }, [code, normalizedLang, isPlainText]);
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(code);
@@ -78,49 +100,47 @@ export function CodeBlock({ code, language = 'text', className }: CodeBlockProps
   };
 
   return (
-    <div className={cn('relative group rounded-lg overflow-hidden border border-zinc-800 bg-zinc-950 text-zinc-100', className)}>
-      {/* Header with language and copy button */}
-      <div className="flex items-center justify-between px-4 py-2 bg-zinc-900 border-b border-zinc-800">
-        <span className="text-xs font-mono text-zinc-400 uppercase">{displayLanguage}</span>
+    <div className={cn(
+      'group relative my-4 rounded-xl overflow-hidden',
+      'border border-zinc-800/80 bg-zinc-950',
+      'shadow-sm',
+      className,
+    )}>
+      {/* Header: language label (left) + copy button (right) */}
+      <div className="flex items-center justify-between px-4 py-2 bg-zinc-900/90 border-b border-zinc-800/80">
+        <span className="text-[11px] font-medium text-zinc-400 select-none tracking-wide">
+          {headerLabel ?? 'text'}
+        </span>
         <Button
-          variant="ghost"
+          variant="secondary"
           size="sm"
-          className="h-6 px-2 text-zinc-300 hover:text-white hover:bg-zinc-800 opacity-0 group-hover:opacity-100 transition-opacity"
+          className="h-7 gap-1.5 px-2.5 text-[10px] font-medium text-zinc-300 bg-zinc-800/60 hover:text-zinc-100 hover:bg-zinc-700/80 border border-zinc-700/50 transition-all active:scale-95"
           onClick={handleCopy}
         >
           {copied ? (
             <>
-              <Check className="h-3 w-3 mr-1" />
-              {t('code.copied')}
+              <Check className="h-3 w-3 text-emerald-400" />
+              <span className="text-emerald-400/90">{t('code.copied')}</span>
             </>
           ) : (
             <>
-              <Copy className="h-3 w-3 mr-1" />
+              <Copy className="h-3 w-3" />
               {t('code.copy')}
             </>
           )}
         </Button>
       </div>
 
-      {/* Code content with line numbers */}
-      <div className="flex">
-        {/* Line numbers */}
-        <div className="hidden sm:block px-3 py-4 text-right bg-zinc-900/80 border-r border-zinc-800 select-none">
-          {code.split('\n').map((_, i) => (
-            <div key={i} className="text-xs text-zinc-500 font-mono leading-5">
-              {i + 1}
-            </div>
-          ))}
-        </div>
-
-        {/* Code: dangerouslySetInnerHTML so React never clobbers hljs output */}
-        <pre className="flex-1 p-4 overflow-x-auto bg-zinc-950">
-          <code
-            className={`hljs language-${displayLanguage} text-sm font-mono leading-5`}
-            dangerouslySetInnerHTML={{ __html: highlightedHtml }}
-          />
-        </pre>
-      </div>
+      {/* Code content — no line-number gutter */}
+      <pre className="overflow-x-auto px-4 py-3.5 bg-zinc-950 m-0">
+        <code
+          className={cn(
+            'text-sm font-mono leading-6',
+            !isPlainText && `hljs language-${normalizedLang}`,
+          )}
+          dangerouslySetInnerHTML={{ __html: highlightedHtml }}
+        />
+      </pre>
     </div>
   );
 }

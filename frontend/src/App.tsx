@@ -1,11 +1,10 @@
-import { BrowserRouter, HashRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { BrowserRouter, HashRouter, Navigate, Routes, Route, useLocation } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
 import { PageTransition } from '@/components/layout/PageTransition';
 import { Layout } from '@/components/layout/Layout';
 import { Home } from '@/pages/Home';
 import { Models } from '@/pages/Models';
 import { Chat } from '@/pages/Chat';
-import { Downloads } from '@/pages/Downloads';
 import { Memory } from '@/pages/Memory';
 import { Settings } from '@/pages/Settings';
 import { ComputerUse } from '@/pages/ComputerUse';
@@ -22,7 +21,7 @@ function AnimatedRoutes() {
         <Route path="/" element={<PageTransition><Home /></PageTransition>} />
         <Route path="/models" element={<PageTransition><Models /></PageTransition>} />
         <Route path="/chat" element={<PageTransition><Chat /></PageTransition>} />
-        <Route path="/downloads" element={<PageTransition><Downloads /></PageTransition>} />
+        <Route path="/downloads" element={<Navigate to="/models?tab=transfers" replace />} />
         <Route path="/memory" element={<PageTransition><Memory /></PageTransition>} />
         <Route path="/settings" element={<PageTransition><Settings /></PageTransition>} />
         <Route path="/computer-use" element={<PageTransition><ComputerUse /></PageTransition>} />

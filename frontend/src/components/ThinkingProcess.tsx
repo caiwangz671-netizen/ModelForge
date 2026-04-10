@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Brain, ChevronDown, ChevronUp, Lightbulb } from 'lucide-react';
+import { Brain, ChevronDown, ChevronUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { MarkdownRenderer, StreamingMarkdownRenderer } from '@/components/MarkdownRenderer';
 import { ToolUseCompactCards } from '@/components/ToolUse';
@@ -56,8 +56,8 @@ export function ThinkingProcess({
 
   return (
     <Card className={cn("border-dashed bg-muted/30", className)}>
-      <CardHeader className="py-3 px-4">
-        <CardTitle className="text-sm flex items-center justify-between">
+      <CardHeader className="py-2.5 px-3">
+        <CardTitle className="text-[13px] flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Brain className={cn("h-4 w-4", getIconColor())} />
             <span className="text-muted-foreground font-medium">{getModelLabel()}</span>
@@ -77,7 +77,7 @@ export function ThinkingProcess({
         </CardTitle>
       </CardHeader>
       {isExpanded && (
-        <CardContent className="pt-0 pb-4 px-4">
+        <CardContent className="pt-0 pb-3 px-3">
           {hasTools && (
             <ToolUseCompactCards
               tools={tools}
@@ -117,14 +117,6 @@ export function ThinkingProcess({
               )}
             </div>
           </div>
-          
-          {/* Insight indicator */}
-          {hasThinking && (
-            <div className="flex items-center gap-2 mt-3 text-xs text-muted-foreground">
-              <Lightbulb className="h-3 w-3" />
-              <span>{t('thinking.disclaimer')}</span>
-            </div>
-          )}
         </CardContent>
       )}
     </Card>

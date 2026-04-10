@@ -106,7 +106,7 @@ export function useChat() {
             await restoreCurrentConversation();
         };
         init();
-    }, []);
+    }, [fetchConversations, fetchModels, restoreCurrentConversation]);
 
     useEffect(() => {
         if (typeof window === 'undefined') return;
@@ -219,7 +219,7 @@ export function useChat() {
         return thinkingEnabledByModel[modelName] ?? true;
     };
 
-    const supportsTools = (modelName: string): boolean => {
+    const supportsTools = useCallback((modelName: string): boolean => {
         const model = (models as OfficialModel[]).find((m) => m.name === modelName);
         if (!model) return false;
         if (typeof model.capabilities?.supports_tools === 'boolean') {
@@ -227,14 +227,14 @@ export function useChat() {
         }
         const caps = new Set((model.ollama_capabilities || []).map((c) => c.toLowerCase()));
         return caps.has('tools');
-    };
+    }, [models]);
 
     useEffect(() => {
         if (!currentConversation || !webSearchEnabled) return;
         if (!supportsTools(currentConversation.model)) {
             setWebSearchEnabled(false);
         }
-    }, [currentConversation?.model, webSearchEnabled, models]);
+    }, [currentConversation, webSearchEnabled, supportsTools]);
 
     const toggleThinking = (modelName: string) => {
         setThinkingEnabledByModel((prev) => ({

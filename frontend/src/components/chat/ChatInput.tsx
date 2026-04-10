@@ -16,6 +16,7 @@ import {
 import type { ChatAttachment } from '@/types';
 import { useTranslation } from 'react-i18next';
 import { useToast } from '@/components/ui/use-toast';
+import { uploadsApi } from '@/services/api';
 
 interface ChatInputProps {
     inputMessage: string;
@@ -127,8 +128,12 @@ export function ChatInput({
                         continue;
                     }
 
+                    // UPLOAD TO SERVER
+                    const uploadResponse = await uploadsApi.upload(file);
+                    const { id: storageId, url: serverUrl } = uploadResponse.data;
+
                     if (isImage) {
-                        const data = await readImageAttachment(file);
+                        const data = await readImageAttachment(file); // Keep local data for preview
                         nextAttachments.push({
                             id: createAttachmentId(),
                             kind: 'image',
@@ -136,6 +141,8 @@ export function ChatInput({
                             mime_type: file.type || 'image/png',
                             data,
                             size: file.size,
+                            storage_id: storageId,
+                            url: serverUrl,
                         });
                         continue;
                     }
@@ -148,6 +155,8 @@ export function ChatInput({
                         mime_type: file.type || 'text/plain',
                         text,
                         size: file.size,
+                        storage_id: storageId,
+                        url: serverUrl,
                     });
                 } catch (error) {
                     toast({
@@ -440,13 +449,15 @@ export function ChatInput({
                 </label>
             </div>
 
-            <div className="flex items-center gap-2 text-xs text-muted-foreground pl-1">
-                <span>
-                    {modelSupportsImageUpload
-                        ? t('chat.attachmentHintVisual')
-                        : t('chat.attachmentHintTextOnly')}
-                </span>
-            </div>
+            {!hasAttachments && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground pl-1">
+                    <span>
+                        {modelSupportsImageUpload
+                            ? t('chat.attachmentHintVisual')
+                            : t('chat.attachmentHintTextOnly')}
+                    </span>
+                </div>
+            )}
         </div>
     );
 }

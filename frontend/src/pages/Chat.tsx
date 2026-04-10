@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { useChat } from '@/hooks/useChat';
 import { useAutoModelManager } from '@/hooks/useAutoModelManager';
 import { useTranslation } from 'react-i18next';
+import { useModelStore } from '@/store/modelStore';
 
 export type OfficialModelDetails = {
   parent_model: string;
@@ -32,17 +33,17 @@ export type OfficialModel = {
   };
 };
 import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { MarkdownRenderer, StreamingMarkdownRenderer } from '@/components/MarkdownRenderer';
 import { ThinkingProcess } from '@/components/ThinkingProcess';
 import {
-  Plus, MessageSquare, Bot, User, Loader2, BookmarkPlus, ExternalLink, FileText, Image as ImageIcon
+  MessageSquare, Bot, User, Loader2, BookmarkPlus, ExternalLink, FileText, Image as ImageIcon, ArrowDown
 } from 'lucide-react';
 import type { ChatAttachment, Message, RagReference } from '@/types';
 import { cn } from '@/lib/utils';
 import { ChatSidebar } from '@/components/chat/ChatSidebar';
 import { ChatHeader } from '@/components/chat/ChatHeader';
 import { ChatInput } from '@/components/chat/ChatInput';
+import { SurfaceState } from '@/components/layout/SurfaceState';
 
 // Extended Message with thinking support
 interface ExtendedMessage extends Message {
@@ -90,6 +91,8 @@ export function Chat() {
   const layoutRef = useRef<HTMLDivElement>(null);
   const [sidebarWidth, setSidebarWidth] = useState(320);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
+  const [isAutoScrollLocked, setIsAutoScrollLocked] = useState(false);
+  const userScrolledRef = useRef(false);
 
   useEffect(() => {
     if (!isResizingSidebar) return;
@@ -188,12 +191,28 @@ export function Chat() {
     loadConversation,
   } = chatStore;
 
+  const { runningModelsDetail, systemHardware, fetchSystemHardware, fetchRunningModels } = useModelStore();
+
+  // Poll system hardware & running models telemetry every 3 seconds for the header
+  useEffect(() => {
+    const poll = () => {
+      fetchSystemHardware();
+      fetchRunningModels();
+    };
+    poll();
+    const interval = setInterval(poll, 3000);
+    return () => clearInterval(interval);
+  }, [fetchSystemHardware, fetchRunningModels]);
+
   const currentConversationModelInfo = llmModels.find((model) => model.name === currentConversation?.model);
   const currentModelSupportsImageUpload = Boolean(
     currentConversationModelInfo?.capabilities?.supports_video
     || currentConversationModelInfo?.capabilities?.supports_vision
     || currentConversationModelInfo?.capabilities?.supports_ocr
   );
+
+  // Always show statistics (improved from previous conditional display)
+  const verboseStats = true;
 
   const autoLoadEnabled = typeof window !== 'undefined' && window.localStorage.getItem('autoLoadModel') === 'true';
   const idleTimeoutMinutes = typeof window !== 'undefined'
@@ -207,10 +226,76 @@ export function Chat() {
     currentModel: currentConversation?.model,
   });
 
+  // Guard: set to true while we are programmatically scrolling so
+  // the onScroll handler doesn't treat it as user interaction.
+  const isProgrammaticScrollRef = useRef(false);
+
+  const handleScroll = () => {
+    // Ignore scroll events fired by our own programmatic scrollTo
+    if (isProgrammaticScrollRef.current) return;
+
+    const container = scrollRef.current;
+    if (!container) return;
+    
+    // Explicitly check for scroll-to-bottom threshold (ignore tiny pixel differences)
+    const containerHeight = container.clientHeight;
+    const scrollHeight = container.scrollHeight;
+    const scrollTop = container.scrollTop;
+    const isAtBottom = scrollHeight - scrollTop - containerHeight < 120;
+
+    userScrolledRef.current = !isAtBottom;
+    setIsAutoScrollLocked(!isAtBottom);
+  };
+
+  const scrollToBottom = () => {
+    const container = scrollRef.current;
+    if (!container) return;
+    
+    // Reset flags
+    userScrolledRef.current = false;
+    setIsAutoScrollLocked(false);
+    
+    // Guard
+    isProgrammaticScrollRef.current = true;
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior: 'smooth',
+    });
+    
+    // Long enough timeout for smooth scroll to finish on most devices
+    setTimeout(() => { 
+      isProgrammaticScrollRef.current = false; 
+    }, 800);
+  };
+
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (!container) return;
+
+    // If the user manually scrolled up, stop auto-scrolling
+    if (userScrolledRef.current) {
+      return;
+    }
+
+    isProgrammaticScrollRef.current = true;
+    const frame = window.requestAnimationFrame(() => {
+      container.scrollTo({
+        top: container.scrollHeight,
+        behavior: isStreaming ? 'auto' : 'smooth',
+      });
+      // Safety release of the guard
+      setTimeout(() => { 
+        isProgrammaticScrollRef.current = false; 
+      }, isStreaming ? 100 : 800);
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [scrollRef, messages.length, streamingMessage, streamingThinking, isStreaming, currentConversation?.id]);
+
   return (
     <div
       ref={layoutRef}
-      className="h-[calc(100vh-4rem)] flex gap-4 overflow-hidden bg-background/50 p-2 md:p-3"
+      className="flex h-full min-h-0 gap-4 overflow-hidden px-1 pb-1"
     >
       <div className="relative shrink-0 min-w-0" style={{ width: `${sidebarWidth}px` }}>
         <ChatSidebar
@@ -265,6 +350,8 @@ export function Chat() {
               isSwitchingModel={isSwitchingModel}
               isStreaming={isStreaming}
               currentDetails={currentDetails}
+              runningModelsDetail={runningModelsDetail}
+              systemHardware={systemHardware}
               isReasoningModel={isReasoningModel}
               isThinkingEnabled={isThinkingEnabled}
               toggleThinking={toggleThinking}
@@ -280,16 +367,26 @@ export function Chat() {
             />
 
             {/* Messages - USE messages FROM STORE DIRECTLY */}
-            <ScrollArea className="flex-1 min-h-0 py-5 px-3 md:px-6" ref={scrollRef}>
-              <div className="space-y-7 max-w-5xl mx-auto w-full">
+            <div className="relative flex-1 min-h-0 flex flex-col">
+              <div
+                className="flex-1 min-h-0 overflow-y-auto overscroll-contain py-4 px-3 md:px-6 relative"
+                ref={scrollRef}
+                onScroll={handleScroll}
+              >
+                <div className="space-y-6 max-w-4xl mx-auto w-full pb-6">
                 <AnimatePresence initial={false}>
                   {(messages as ExtendedMessage[]).map((message, index) => (
                     <motion.div
                       key={index}
-                      className="space-y-3.5"
-                      initial={{ opacity: 0, y: 15, scale: 0.98 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      transition={{ duration: 0.3, ease: 'easeOut' }}
+                      className="space-y-3.5 group relative"
+                      initial={{ opacity: 0, y: 20, filter: 'blur(8px)' }}
+                      animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+                      transition={{ 
+                        type: 'spring',
+                        stiffness: 260,
+                        damping: 25,
+                        mass: 0.8,
+                      }}
                     >
                       {/* Thinking Process */}
                       {(message.thinking || (Array.isArray(message.tool_calls) && message.tool_calls.length > 0)) && (
@@ -430,11 +527,11 @@ export function Chat() {
                         </div>
                       </div>
                       {message.role === 'user' && (
-                        <div className="flex justify-end pr-12">
+                        <div className="flex justify-end pr-12 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-7 text-xs rounded-full border bg-background/60 hover:bg-muted/70"
+                            className="h-6 px-3 text-[11px] rounded-full bg-background/50 text-muted-foreground hover:bg-muted hover:text-foreground shadow-sm backdrop-blur-sm border"
                             onClick={() => handleRememberMessage(message.content, index)}
                             disabled={savingMemoryIndex === index}
                           >
@@ -447,6 +544,52 @@ export function Chat() {
                           </Button>
                         </div>
                       )}
+                      {verboseStats && message.role === 'assistant' && (() => {
+                        const s = message.usage_stats;
+                        if (!s) return null;
+                        const evalTokens = typeof s.eval_count === 'number' ? s.eval_count : 0;
+                        const evalNs = typeof s.eval_duration === 'number' ? s.eval_duration : 0;
+                        const promptTokens = typeof s.prompt_eval_count === 'number' ? s.prompt_eval_count : 0;
+                        const totalNs = typeof s.total_duration === 'number' ? s.total_duration : 0;
+                        const evalSecs = evalNs / 1e9;
+                        const totalSecs = totalNs / 1e9;
+                        const speed = evalSecs > 0.001 && evalTokens > 0 ? evalTokens / evalSecs : 0;
+                        
+                        // Defensive checks for robustness
+                        if (!Number.isFinite(evalTokens) || !Number.isFinite(promptTokens) || !Number.isFinite(totalSecs)) return null;
+                        
+                        const parts: Array<{ label: string; value: string }> = [];
+                        if (evalTokens > 0) {
+                          parts.push({
+                            label: 'Output',
+                            value: speed > 0 ? `${evalTokens}t @ ${speed.toFixed(1)}t/s` : `${evalTokens}t`
+                          });
+                        }
+                        if (promptTokens > 0) {
+                          parts.push({
+                            label: 'Input',
+                            value: `${promptTokens}t`
+                          });
+                        }
+                        if (totalSecs > 0.001) {
+                          parts.push({
+                            label: 'Time',
+                            value: `${totalSecs.toFixed(2)}s`
+                          });
+                        }
+                        if (parts.length === 0) return null;
+                        
+                        return (
+                          <div className="ml-12 mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] font-mono select-none opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                            {parts.map((item, i) => (
+                              <span key={i} className="flex items-center gap-1 text-muted-foreground/40">
+                                {i > 0 && <span className="opacity-50">·</span>}
+                                {item.label}: <span className="text-muted-foreground/60">{item.value}</span>
+                              </span>
+                            ))}
+                          </div>
+                        );
+                      })()}
                     </motion.div>
                   ))}
                 </AnimatePresence>
@@ -476,47 +619,72 @@ export function Chat() {
                         enableMath={true}
                         enableCodeHighlight={false}
                       />
-                      <span className="inline-block w-2 h-4 bg-current animate-pulse ml-1" />
+                      <span className="inline-block w-1.5 h-4 bg-primary/70 rounded-full animate-pulse ml-1 align-middle" style={{ animationDuration: '0.8s' }} />
                     </div>
                   </div>
                 )}
               </div>
-            </ScrollArea>
+            </div>
 
-            <ChatInput
-              inputMessage={inputMessage}
-              setInputMessage={setInputMessage}
-              isStreaming={isStreaming}
-              rememberThisMessage={rememberThisMessage}
-              setRememberThisMessage={setRememberThisMessage}
-              handleSendMessage={handleSendMessage}
-              handleRetryLastMessage={handleRetryLastMessage}
-              handleStopStreaming={handleStopStreaming}
-              handleKeyDown={handleKeyDown}
-              inputRef={inputRef}
-              isPromptPanelOpen={isPromptPanelOpen}
-              setIsPromptPanelOpen={setIsPromptPanelOpen}
-              promptSuggestions={promptSuggestions}
-              selectedPromptIndex={selectedPromptIndex}
-              applyPromptSuggestion={applyPromptSuggestion}
-              modelSupportsImageUpload={currentModelSupportsImageUpload}
-              canRetryLastMessage={canRetryLastMessage}
-            />
+            <AnimatePresence>
+              {isAutoScrollLocked && (
+                <motion.div
+                  initial={{ opacity: 0, y: 15, scale: 0.9 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 15, scale: 0.9 }}
+                  className="absolute bottom-24 right-8 z-10"
+                >
+                  <Button
+                    variant="secondary"
+                    size="icon"
+                    className="h-10 w-10 rounded-full shadow-lg border border-primary/20 bg-background/80 backdrop-blur-md hover:bg-muted"
+                    onClick={scrollToBottom}
+                  >
+                    <ArrowDown className="h-5 w-5 text-primary" />
+                  </Button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <div className="shrink-0 px-2 pb-2 pt-1 transition-all">
+              <ChatInput
+                inputMessage={inputMessage}
+                setInputMessage={setInputMessage}
+                isStreaming={isStreaming}
+                rememberThisMessage={rememberThisMessage}
+                setRememberThisMessage={setRememberThisMessage}
+                handleSendMessage={(attachments) => {
+                  scrollToBottom();
+                  handleSendMessage(attachments);
+                }}
+                handleRetryLastMessage={handleRetryLastMessage}
+                handleStopStreaming={handleStopStreaming}
+                handleKeyDown={handleKeyDown}
+                inputRef={inputRef}
+                isPromptPanelOpen={isPromptPanelOpen}
+                setIsPromptPanelOpen={setIsPromptPanelOpen}
+                promptSuggestions={promptSuggestions}
+                selectedPromptIndex={selectedPromptIndex}
+                applyPromptSuggestion={applyPromptSuggestion}
+                modelSupportsImageUpload={currentModelSupportsImageUpload}
+                canRetryLastMessage={canRetryLastMessage}
+              />
+            </div>
+          </div>
           </>
         ) : (
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-center text-muted-foreground border border-border/70 rounded-2xl px-8 py-10 bg-card/82 shadow-sm dark:bg-card/78">
-              <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p className="text-base font-medium text-foreground">{t('chat.emptyTitle')}</p>
-              <p className="text-sm mt-1">{t('chat.emptyDescription')}</p>
-              <Button
-                className="mt-5 rounded-full px-5"
-                onClick={handleQuickCreateConversation}
-                disabled={isCreatingConversation}
-              >
-                <Plus className="h-4 w-4 mr-1" />{t('chat.createNew')}
-              </Button>
-            </div>
+          <div className="flex flex-1 items-center justify-center px-4">
+            <SurfaceState
+              icon={MessageSquare}
+              title={t('chat.emptyTitle')}
+              description={t('chat.emptyDescription')}
+              tone="neutral"
+              action={{
+                label: isCreatingConversation ? t('common.loading') : t('chat.createNew'),
+                onClick: handleQuickCreateConversation,
+              }}
+              className="max-w-lg"
+            />
           </div>
         )}
       </div>

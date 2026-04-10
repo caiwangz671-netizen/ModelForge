@@ -2,26 +2,35 @@ import { Link, useLocation } from 'react-router-dom';
 import {
   Home,
   MessageSquare,
-  Download,
   Brain,
   Settings,
+  BookMarked,
   Menu,
   X,
   MonitorSmartphone,
+  type LucideIcon,
 } from 'lucide-react';
 import { AnimatePresence, LayoutGroup, motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { useTranslation } from 'react-i18next';
+import { ShellHeader } from '@/components/layout/ShellHeader';
+import { getShellMeta, normalizeShellPath, persistLastPrimaryPath } from '@/lib/pageMeta';
+import { useChatStore } from '@/store/chatStore';
+import { useModelStore } from '@/store/modelStore';
+import { useDownloadStore } from '@/store/downloadStore';
+import { useComputerUseStore } from '@/store/computerUseStore';
 
-const navItems = [
-  { path: '/', labelKey: 'nav.home', icon: Home },
-  { path: '/models', labelKey: 'nav.models', icon: Brain },
+const primaryNavItems = [
+  { path: '/', labelKey: 'nav.workspace', icon: Home },
   { path: '/chat', labelKey: 'nav.chat', icon: MessageSquare },
-  { path: '/downloads', labelKey: 'nav.downloads', icon: Download },
   { path: '/computer-use', labelKey: 'nav.computerUse', icon: MonitorSmartphone },
-  { path: '/memory', labelKey: 'nav.memory', icon: Brain },
+  { path: '/models', labelKey: 'nav.models', icon: Brain },
+];
+
+const utilityNavItems = [
+  { path: '/memory', labelKey: 'nav.memory', icon: BookMarked },
   { path: '/settings', labelKey: 'nav.settings', icon: Settings },
 ];
 
@@ -33,8 +42,134 @@ export function Layout({ children }: LayoutProps) {
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { t } = useTranslation();
-  const isChatPage = location.pathname === '/chat';
-  const isComputerUsePage = location.pathname === '/computer-use';
+  const normalizedPath = normalizeShellPath(location.pathname);
+  const isComputerUsePage = normalizedPath === '/computer-use';
+  const shellMeta = getShellMeta(normalizedPath);
+  const { currentConversation, isStreaming: isChatStreaming, conversations } = useChatStore();
+  const { runningModels } = useModelStore();
+  const { tasks } = useDownloadStore();
+  const { currentSession } = useComputerUseStore();
+
+  useEffect(() => {
+    persistLastPrimaryPath(normalizedPath);
+  }, [normalizedPath]);
+
+  const activeDownloads = useMemo(
+    () => tasks.filter((task) => task.status === 'queued' || task.status === 'downloading').length,
+    [tasks],
+  );
+
+  const shellStatus = useMemo(() => {
+    if (normalizedPath === '/') {
+      if (currentSession && !['completed', 'failed', 'cancelled'].includes(currentSession.status)) {
+        return {
+          tone: currentSession.status === 'waiting_approval' ? 'warning' as const : 'info' as const,
+          label: t('shell.status.activeTask'),
+          detail: currentSession.goal,
+        };
+      }
+      if (activeDownloads > 0) {
+        return {
+          tone: 'info' as const,
+          label: t('shell.status.activeTransfers', { count: activeDownloads }),
+          detail: t('shell.status.activeTransfersDetail'),
+        };
+      }
+      if (conversations.length > 0) {
+        return {
+          tone: 'success' as const,
+          label: t('shell.status.readyToResume'),
+          detail: t('shell.status.readyToResumeDetail'),
+        };
+      }
+      return {
+        tone: 'neutral' as const,
+        label: t('shell.status.systemReady'),
+        detail: t('shell.status.systemReadyDetail'),
+      };
+    }
+
+    if (normalizedPath === '/chat') {
+      if (isChatStreaming) {
+        return {
+          tone: 'info' as const,
+          label: t('shell.status.streaming'),
+          detail: currentConversation?.model || t('shell.chat.subtitle'),
+        };
+      }
+      if (currentConversation) {
+        return {
+          tone: 'success' as const,
+          label: currentConversation.model || t('shell.status.ready'),
+          detail: currentConversation.title || t('chat.newConversation'),
+        };
+      }
+      return {
+        tone: 'neutral' as const,
+        label: t('shell.status.ready'),
+        detail: t('shell.status.chatIdleDetail'),
+      };
+    }
+
+    if (normalizedPath === '/computer-use') {
+      if (currentSession && !['completed', 'failed', 'cancelled'].includes(currentSession.status)) {
+        return {
+          tone: currentSession.status === 'waiting_approval' ? 'warning' as const : 'info' as const,
+          label: t(`computerUse.status${capitalizeStatus(currentSession.status)}`),
+          detail: currentSession.goal,
+        };
+      }
+      return {
+        tone: 'neutral' as const,
+        label: t('shell.status.noActiveTask'),
+        detail: t('shell.status.noActiveTaskDetail'),
+      };
+    }
+
+    if (normalizedPath === '/models') {
+      if (activeDownloads > 0) {
+        return {
+          tone: 'info' as const,
+          label: t('shell.status.activeTransfers', { count: activeDownloads }),
+          detail: t('shell.status.activeTransfersDetail'),
+        };
+      }
+      if (runningModels.length > 0) {
+        return {
+          tone: 'success' as const,
+          label: t('shell.status.loadedModels', { count: runningModels.length }),
+          detail: t('shell.status.loadedModelsDetail'),
+        };
+      }
+      return {
+        tone: 'neutral' as const,
+        label: t('shell.status.catalogReady'),
+        detail: t('shell.status.catalogReadyDetail'),
+      };
+    }
+
+    return {
+      tone: 'neutral' as const,
+      label: t('shell.status.ready'),
+      detail: shellMeta.subtitleKey ? t(shellMeta.subtitleKey) : undefined,
+    };
+  }, [
+    activeDownloads,
+    conversations.length,
+    currentConversation,
+    currentSession,
+    isChatStreaming,
+    normalizedPath,
+    runningModels.length,
+    shellMeta.subtitleKey,
+    t,
+  ]);
+
+  const contentWidthClassName = useMemo(() => {
+    if (shellMeta.density === 'immersive') return 'w-full max-w-none';
+    if (shellMeta.density === 'wide') return 'w-full max-w-[1560px]';
+    return 'w-full max-w-6xl';
+  }, [shellMeta.density]);
 
   return (
     <div className="relative flex h-screen flex-col overflow-hidden bg-background">
@@ -79,46 +214,24 @@ export function Layout({ children }: LayoutProps) {
             <h1 className="text-2xl font-bold hidden lg:block">ModelForge</h1>
           </div>
 
-          <nav className="px-4 space-y-1">
-            <LayoutGroup id="sidebar-navigation">
-              {navItems.map((item) => {
-                const Icon = item.icon;
-                const isActive = location.pathname === item.path;
-
-                return (
-                  <Link
-                    key={item.path}
-                    to={item.path}
-                    onClick={() => setSidebarOpen(false)}
-                    className={cn(
-                      'relative block overflow-hidden rounded-xl px-3 py-2 text-sm font-medium transition-colors',
-                      isActive
-                        ? 'text-primary-foreground'
-                        : isComputerUsePage
-                          ? 'text-slate-400 hover:text-slate-50'
-                          : 'text-muted-foreground hover:text-foreground'
-                    )}
-                  >
-                    {isActive && (
-                      <motion.span
-                        layoutId="sidebar-active-pill"
-                        className="absolute inset-0 rounded-xl bg-primary shadow-[0_18px_40px_-30px_rgba(15,23,42,0.9)]"
-                        transition={{ type: 'spring', stiffness: 360, damping: 32, mass: 0.7 }}
-                      />
-                    )}
-                    <motion.span
-                      whileHover={{ x: isActive ? 0 : 3 }}
-                      whileTap={{ scale: 0.985 }}
-                      className="relative flex items-center gap-3"
-                    >
-                      <Icon className="h-5 w-5" />
-                      {t(item.labelKey)}
-                    </motion.span>
-                  </Link>
-                );
-              })}
-            </LayoutGroup>
-          </nav>
+          <div className="space-y-6 px-4">
+            <SidebarSection
+              title={t('nav.primary')}
+              items={primaryNavItems}
+              currentPath={normalizedPath}
+              onNavigate={() => setSidebarOpen(false)}
+              isComputerUsePage={isComputerUsePage}
+              t={t}
+            />
+            <SidebarSection
+              title={t('nav.utility')}
+              items={utilityNavItems}
+              currentPath={normalizedPath}
+              onNavigate={() => setSidebarOpen(false)}
+              isComputerUsePage={isComputerUsePage}
+              t={t}
+            />
+          </div>
         </aside>
 
         {/* Overlay for mobile */}
@@ -137,7 +250,7 @@ export function Layout({ children }: LayoutProps) {
 
         {/* Main content */}
         <main className={cn(
-          'flex-1 min-h-0 overflow-y-auto lg:ml-64',
+          'flex-1 min-h-0 overflow-hidden lg:ml-64',
           isComputerUsePage
             ? 'bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.08),transparent_24%),radial-gradient(circle_at_80%_0%,rgba(59,130,246,0.1),transparent_22%),linear-gradient(180deg,#020617_0%,#030916_100%)]'
             : 'bg-background dark:bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.06),transparent_22%),radial-gradient(circle_at_82%_0%,rgba(59,130,246,0.08),transparent_20%),linear-gradient(180deg,#070d18_0%,#050912_100%)]',
@@ -146,18 +259,98 @@ export function Layout({ children }: LayoutProps) {
             layout
             transition={{ layout: { duration: 0.36, ease: [0.22, 1, 0.36, 1] } }}
             className={cn(
-              "h-full p-6 transition-all duration-300 lg:p-8",
-              isChatPage
-                ? ""
-                : isComputerUsePage
-                  ? "mx-auto w-full max-w-[1560px]"
-                  : "mx-auto w-full max-w-6xl"
+              'mx-auto flex h-full min-h-0 flex-col gap-4 p-4 transition-all duration-300 lg:p-6',
+              contentWidthClassName,
             )}
           >
-            {children}
+            <ShellHeader
+              eyebrow="ModelForge"
+              title={t(shellMeta.titleKey)}
+              subtitle={t(shellMeta.subtitleKey)}
+              statusLabel={shellStatus.label}
+              statusTone={shellStatus.tone}
+              detail={shellStatus.detail}
+              compact={normalizedPath === '/chat' || normalizedPath === '/computer-use'}
+              action={shellMeta.action ? { label: t(shellMeta.action.labelKey), to: shellMeta.action.to } : undefined}
+            />
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {children}
+            </div>
           </motion.div>
         </main>
       </div>
     </div>
   );
+}
+
+function SidebarSection({
+  title,
+  items,
+  currentPath,
+  onNavigate,
+  isComputerUsePage,
+  t,
+}: {
+  title: string;
+  items: Array<{ path: string; labelKey: string; icon: LucideIcon }>;
+  currentPath: string;
+  onNavigate: () => void;
+  isComputerUsePage: boolean;
+  t: (key: string) => string;
+}) {
+  return (
+    <div>
+      <div className="mb-2 px-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/80">
+        {title}
+      </div>
+      <nav className="space-y-1">
+        <LayoutGroup id={`sidebar-navigation-${title}`}>
+          {items.map((item) => {
+            const Icon = item.icon;
+            const isActive = currentPath === item.path;
+
+            return (
+              <Link
+                key={item.path}
+                to={item.path}
+                onClick={onNavigate}
+                className={cn(
+                  'relative block overflow-hidden rounded-xl px-3 py-2 text-sm font-medium transition-colors',
+                  isActive
+                    ? 'text-primary-foreground'
+                    : isComputerUsePage
+                      ? 'text-slate-400 hover:text-slate-50'
+                      : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                {isActive && (
+                  <motion.span
+                    layoutId="sidebar-active-pill"
+                    className="absolute inset-0 rounded-xl bg-primary shadow-[0_18px_40px_-30px_rgba(15,23,42,0.9)]"
+                    transition={{ type: 'spring', stiffness: 360, damping: 32, mass: 0.7 }}
+                  />
+                )}
+                <motion.span
+                  whileHover={{ x: isActive ? 0 : 3 }}
+                  whileTap={{ scale: 0.985 }}
+                  className="relative flex items-center gap-3"
+                >
+                  <Icon className="h-5 w-5" />
+                  {t(item.labelKey)}
+                </motion.span>
+              </Link>
+            );
+          })}
+        </LayoutGroup>
+      </nav>
+    </div>
+  );
+}
+
+function capitalizeStatus(status: string): string {
+  return status
+    .split(/[_-]/g)
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join('');
 }

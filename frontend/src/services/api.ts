@@ -34,6 +34,7 @@ export const downloadsApi = {
     api.post('/downloads/', { model_name: modelName, model_version: modelVersion }),
   getStatus: (taskId: string) => api.get(`/downloads/${taskId}`),
   cancel: (taskId: string) => api.delete(`/downloads/${taskId}`),
+  clearHistory: () => api.delete('/downloads/history'),
 };
 
 // Chat API
@@ -146,6 +147,19 @@ export const computerUseApi = {
   requestPermissions: () => api.post('/computer-use/request-permissions'),
 };
 
+// Uploads API
+export const uploadsApi = {
+  upload: (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return api.post('/uploads', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  getMetadata: (id: string) => api.get(`/uploads/${id}`),
+  getFileUrl: (id: string) => `${API_BASE_URL}/uploads/${id}/file`,
+};
+
 // Hardware info type
 export interface HardwareInfo {
   ram_total: number;
@@ -158,4 +172,5 @@ export interface HardwareInfo {
   os: string;
   gpu_name: string | null;
   gpu_vram_bytes: number | null;
+  gpu_vram_used: number | null;
 }

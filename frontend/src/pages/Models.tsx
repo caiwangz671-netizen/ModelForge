@@ -1,3 +1,4 @@
+import { useEffect, useMemo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,19 +20,24 @@ import {
   Tag,
   Globe2,
   RefreshCw,
-  Power,
   Sparkles,
   Cpu,
   HardDrive,
   Monitor,
+  Trash2,
+  Clock3,
+  ArrowUpRight,
+  PackageCheck,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { motion } from 'framer-motion';
+import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ModelCard } from '@/components/models/ModelCard';
 import { LibraryModelCard } from '@/components/models/LibraryModelCard';
 import { useModels, stripEmojis } from '@/hooks/useModels';
 import { useModelRecommendation } from '@/hooks/useModelRecommendation';
+import { SurfaceState } from '@/components/layout/SurfaceState';
 import type { Model } from '@/types';
 
 type OfficialModelDetails = {
@@ -53,8 +59,21 @@ function formatBytesShort(bytes: number): string {
   return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
 }
 
+function formatTransferSpeed(bytesPerSecond: number): string {
+  if (!bytesPerSecond || bytesPerSecond <= 0) return '—';
+  return `${formatBytesShort(bytesPerSecond)}/s`;
+}
+
+function formatTransferEta(seconds: number): string {
+  if (!seconds || seconds <= 0) return '—';
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+  return `${Math.round(seconds / 3600)}h`;
+}
+
 export function Models() {
   const { t } = useTranslation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { state, actions } = useModels();
 
   const {
@@ -76,7 +95,7 @@ export function Models() {
     tagsToDisplay,
     runningCount,
     downloadedCount,
-    availableCount,
+    downloadTasks,
     modelStore,
   } = state;
 
@@ -100,12 +119,39 @@ export function Models() {
     isModelResident,
     isModelDownloaded,
     isModelDownloading,
+    cancelDownload,
+    clearHistory,
   } = actions;
 
   const { models, fetchLibraryModels, isLoading, libraryModels } = modelStore;
 
   // Smart recommendation engine
   const { hardware, loading: hwLoading, memoryLabel, perfectModels, goodModels, possibleModels } = useModelRecommendation(libraryModels);
+  const currentTabFromUrl = searchParams.get('tab');
+
+  useEffect(() => {
+    const allowedTabs = new Set(['recommended', 'all', 'downloaded', 'available', 'transfers']);
+    if (currentTabFromUrl && allowedTabs.has(currentTabFromUrl) && currentTabFromUrl !== activeTab) {
+      setActiveTab(currentTabFromUrl as 'recommended' | 'all' | 'downloaded' | 'available' | 'transfers');
+    }
+  }, [activeTab, currentTabFromUrl, setActiveTab]);
+
+  const handleTabChange = (nextTab: 'recommended' | 'all' | 'downloaded' | 'available' | 'transfers') => {
+    setActiveTab(nextTab);
+    const next = new URLSearchParams(searchParams);
+    if (nextTab === 'recommended') next.delete('tab');
+    else next.set('tab', nextTab);
+    setSearchParams(next, { replace: true });
+  };
+
+  const activeTransferTasks = useMemo(
+    () => downloadTasks.filter((task) => task.status === 'queued' || task.status === 'downloading'),
+    [downloadTasks],
+  );
+  const transferHistoryTasks = useMemo(
+    () => downloadTasks.filter((task) => task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled'),
+    [downloadTasks],
+  );
   const liveCatalogSourceLabel = (() => {
     switch (libraryMeta?.source) {
       case 'official-api+search+library':
@@ -140,100 +186,111 @@ export function Models() {
   const filteredPossible = filterRec(possibleModels);
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-3xl font-bold tracking-tight">{t('models.title')}</h2>
-          <p className="text-muted-foreground mt-1">{t('models.subtitle')}</p>
+    <div className="space-y-5">
+      <Card className="border-border/70 bg-card/82 shadow-[0_22px_60px_-54px_rgba(15,23,42,0.45)]">
+        <CardContent className="space-y-5 p-5">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+            <div className="space-y-3">
+              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                {t('models.catalogOverview')}
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-2xl border border-border/70 bg-background/60 p-4">
+                  <div className="text-xs text-muted-foreground">{t('models.metrics.downloaded')}</div>
+                  <div className="mt-2 text-2xl font-semibold">{downloadedCount}</div>
+                </div>
+                <div className="rounded-2xl border border-border/70 bg-background/60 p-4">
+                  <div className="text-xs text-muted-foreground">{t('models.metrics.loaded')}</div>
+                  <div className="mt-2 text-2xl font-semibold">{runningCount}</div>
+                </div>
+                <div className="rounded-2xl border border-border/70 bg-background/60 p-4">
+                  <div className="text-xs text-muted-foreground">{t('models.metrics.transfers')}</div>
+                  <div className="mt-2 text-2xl font-semibold">{activeTransferTasks.length}</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 xl:max-w-[420px] xl:justify-end">
+              <Button variant="outline" onClick={() => fetchLibraryModels(true)} className="rounded-2xl">
+                <RefreshCw className="mr-2 h-4 w-4" />
+                {t('models.refreshLibrary')}
+              </Button>
+              <Button variant="outline" onClick={() => handleTabChange('transfers')} className="rounded-2xl">
+                <ArrowUpRight className="mr-2 h-4 w-4" />
+                {t('models.tabTransfers')}
+              </Button>
+              <Button variant="outline" onClick={handleOpenOfficialSearch} className="rounded-2xl">
+                <Globe2 className="mr-2 h-4 w-4" />
+                {t('models.officialSearch')}
+              </Button>
+            </div>
+          </div>
+
           {libraryMeta?.count ? (
-            <p className="mt-2 text-xs text-muted-foreground">
-              {t('models.liveCatalog', {
-                count: libraryMeta.count,
-                source: liveCatalogSourceLabel,
-                syncedAt: liveCatalogSyncedAt || '--:--',
-              })}
-            </p>
+            <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+              <Badge variant="outline" className="rounded-full px-3 py-1">
+                {t('models.liveCatalogBadge', { count: libraryMeta.count })}
+              </Badge>
+              <span>
+                {t('models.liveCatalog', {
+                  count: libraryMeta.count,
+                  source: liveCatalogSourceLabel,
+                  syncedAt: liveCatalogSyncedAt || '--:--',
+                })}
+              </span>
+            </div>
           ) : null}
-        </div>
-        <div className="flex gap-2">
+        </CardContent>
+      </Card>
+
+      <div className="rounded-2xl border border-border/70 bg-card/76 p-2 shadow-sm">
+        <div className="flex flex-wrap gap-2">
           <Button
             variant={activeTab === 'recommended' ? 'default' : 'outline'}
-            onClick={() => setActiveTab('recommended')}
+            onClick={() => handleTabChange('recommended')}
             className="gap-1.5"
           >
             <Sparkles className="h-4 w-4" />
             {t('models.tabRecommended')}
           </Button>
-          <Button variant={activeTab === 'all' ? 'default' : 'outline'} onClick={() => setActiveTab('all')}>
+          <Button variant={activeTab === 'all' ? 'default' : 'outline'} onClick={() => handleTabChange('all')}>
             {t('models.tabAll')}
           </Button>
           <Button
             variant={activeTab === 'downloaded' ? 'default' : 'outline'}
-            onClick={() => setActiveTab('downloaded')}
+            onClick={() => handleTabChange('downloaded')}
           >
             {t('models.tabDownloaded')} ({models.length})
           </Button>
           <Button
             variant={activeTab === 'available' ? 'default' : 'outline'}
-            onClick={() => setActiveTab('available')}
+            onClick={() => handleTabChange('available')}
           >
             {t('models.tabAvailable')} ({filteredAvailable.length})
+          </Button>
+          <Button
+            variant={activeTab === 'transfers' ? 'default' : 'outline'}
+            onClick={() => handleTabChange('transfers')}
+          >
+            {t('models.tabTransfers')} ({downloadTasks.length})
           </Button>
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-3">
-        <Card>
-          <CardContent className="p-4 flex items-center justify-between">
-            <div>
-              <p className="text-xs text-muted-foreground">{t('models.metrics.downloaded')}</p>
-              <p className="text-2xl font-semibold">{downloadedCount}</p>
-            </div>
-            <Brain className="h-5 w-5 text-primary" />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 flex items-center justify-between">
-            <div>
-              <p className="text-xs text-muted-foreground">{t('models.metrics.loaded')}</p>
-              <p className="text-2xl font-semibold">{runningCount}</p>
-            </div>
-            <Power className="h-5 w-5 text-blue-600" />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 flex items-center justify-between">
-            <div>
-              <p className="text-xs text-muted-foreground">{t('models.metrics.library')}</p>
-              <p className="text-2xl font-semibold">{availableCount}</p>
-            </div>
-            <Globe2 className="h-5 w-5 text-emerald-600" />
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="flex gap-4">
+      <div className="flex flex-col gap-3 lg:flex-row">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             placeholder={t('models.searchAllPlaceholder')}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-10"
+            className="h-11 rounded-2xl pl-10"
           />
         </div>
-        <Button variant="outline" onClick={handleOpenOfficialSearch}>
-          <Globe2 className="h-4 w-4 mr-2" />
-          {t('models.officialSearch')}
-        </Button>
-        <Button variant="outline" onClick={() => fetchLibraryModels(true)}>
-          <RefreshCw className="h-4 w-4 mr-2" />
-          {t('models.refreshLibrary')}
-        </Button>
         <Button
           variant="outline"
           onClick={() => setShowFilters(!showFilters)}
-          className={cn(showFilters && 'bg-muted')}
+          className={cn('rounded-2xl', showFilters && 'bg-muted')}
         >
           <Filter className="h-4 w-4 mr-2" />
           {t('models.filters')}
@@ -605,6 +662,120 @@ export function Models() {
         </div>
       )}
 
+      {(activeTab === 'all' || activeTab === 'transfers') && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h3 className="text-lg font-semibold flex items-center gap-2">
+              <PackageCheck className="h-5 w-5" />
+              {t('models.tabTransfers')} ({downloadTasks.length})
+            </h3>
+            {transferHistoryTasks.length > 0 ? (
+              <Button variant="outline" size="sm" className="rounded-full" onClick={() => void clearHistory()}>
+                <Trash2 className="mr-2 h-4 w-4" />
+                {t('downloads.clearHistory')}
+              </Button>
+            ) : null}
+          </div>
+
+          {downloadTasks.length === 0 ? (
+            <SurfaceState
+              icon={PackageCheck}
+              title={t('models.transfersEmptyTitle')}
+              description={t('models.transfersEmptyDescription')}
+              tone="neutral"
+            />
+          ) : (
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(280px,0.9fr)]">
+              <Card className="border-border/70 bg-card/82">
+                <CardContent className="space-y-3 p-5">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-semibold">{t('downloads.active')}</div>
+                      <div className="text-xs text-muted-foreground">{t('models.transfersActiveDescription')}</div>
+                    </div>
+                    <Badge variant="outline">{activeTransferTasks.length}</Badge>
+                  </div>
+                  {activeTransferTasks.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-border/70 bg-muted/22 px-4 py-5 text-sm text-muted-foreground">
+                      {t('models.transfersNoActive')}
+                    </div>
+                  ) : (
+                    activeTransferTasks.map((task) => (
+                      <div key={task.id} className="rounded-2xl border border-border/70 bg-background/60 p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="font-medium">{task.model_name}</div>
+                            <div className="mt-1 text-xs text-muted-foreground">{task.status_text || task.status}</div>
+                          </div>
+                          <Badge variant="outline">{task.progress.toFixed(1)}%</Badge>
+                        </div>
+                        <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted/50">
+                          <motion.div
+                            className="h-full rounded-full bg-primary"
+                            animate={{ width: `${Math.max(3, task.progress)}%` }}
+                            transition={{ duration: 0.28, ease: 'easeOut' }}
+                          />
+                        </div>
+                        <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                          <span>{formatBytesShort(task.downloaded_size)} / {formatBytesShort(task.total_size)}</span>
+                          <span>{formatTransferSpeed(task.speed)}</span>
+                          <span className="inline-flex items-center gap-1"><Clock3 className="h-3.5 w-3.5" /> {formatTransferEta(task.eta)}</span>
+                        </div>
+                        <div className="mt-3">
+                          <Button variant="outline" size="sm" className="rounded-full" onClick={() => void cancelDownload(task.id)}>
+                            {t('common.cancel')}
+                          </Button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card className="border-border/70 bg-card/82">
+                <CardContent className="space-y-3 p-5">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-semibold">{t('models.transferHistoryTitle')}</div>
+                      <div className="text-xs text-muted-foreground">{t('models.transferHistoryDescription')}</div>
+                    </div>
+                    <Badge variant="outline">{transferHistoryTasks.length}</Badge>
+                  </div>
+                  {transferHistoryTasks.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-border/70 bg-muted/22 px-4 py-5 text-sm text-muted-foreground">
+                      {t('models.transferHistoryEmpty')}
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {transferHistoryTasks.slice(0, 8).map((task) => (
+                        <div key={task.id} className="rounded-2xl border border-border/70 bg-background/60 p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="font-medium">{task.model_name}</div>
+                              <div className="mt-1 text-xs text-muted-foreground">{task.status_text || task.status}</div>
+                            </div>
+                            <Badge variant={task.status === 'completed' ? 'default' : task.status === 'failed' ? 'destructive' : 'outline'}>
+                              {task.status === 'completed'
+                                ? t('downloads.statusCompleted')
+                                : task.status === 'cancelled'
+                                  ? t('downloads.statusCancelled')
+                                  : t('downloads.statusFailed')}
+                            </Badge>
+                          </div>
+                          {task.error ? (
+                            <div className="mt-2 text-xs text-rose-400">{task.error}</div>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          )}
+        </div>
+      )}
+
 
       {(activeTab === 'all' || activeTab === 'downloaded') && (
         <div>
@@ -677,6 +848,7 @@ export function Models() {
                   key={model.slug}
                   model={model}
                   isModelDownloaded={isModelDownloaded}
+                  isModelDownloading={isModelDownloading}
                   handleOpenLibraryModel={handleOpenLibraryModel}
                   index={index}
                 />

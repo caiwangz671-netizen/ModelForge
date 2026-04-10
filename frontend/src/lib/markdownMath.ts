@@ -81,6 +81,41 @@ function normalizeCommonMarkdownInput(content: string): string {
     .replace(/\u200B/g, "");
 }
 
+const SIMPLE_FENCE_LANGS = new Set(["", "text", "txt", "plaintext", "plain", "shell", "sh", "bash", "zsh", "console", "cmd"]);
+
+function shouldCollapseSimpleFence(lang: string, body: string): boolean {
+  const normalizedLang = lang.trim().toLowerCase();
+  if (!SIMPLE_FENCE_LANGS.has(normalizedLang)) return false;
+
+  const lines = body
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length !== 1) return false;
+
+  const value = lines[0];
+  if (!value || value.length > 72) return false;
+  if (value.includes("`")) return false;
+  if (/^\s*[-*]\s+/.test(value)) return false;
+  if (/[{};]/.test(value)) return false;
+
+  return true;
+}
+
+function collapseSimpleCodeFences(content: string): string {
+  if (!content.includes("```")) return content;
+
+  return content.replace(/```([^\n`]*)\n([\s\S]*?)\n```/g, (match, lang: string, body: string) => {
+    if (!shouldCollapseSimpleFence(lang || "", body || "")) {
+      return match;
+    }
+
+    const line = body.trim().split("\n").map((item) => item.trim()).filter(Boolean)[0];
+    return `\`${line}\``;
+  });
+}
+
 function countUnescapedTokenOccurrences(text: string, token: string): number {
   if (!text || !token) return 0;
   let count = 0;
@@ -344,7 +379,7 @@ function applyStreamingMathStabilizer(content: string): string {
 }
 
 export function debugMarkdownMathPipeline(content: string): MarkdownMathTraceStep[] {
-  const normalized = normalizeCommonMarkdownInput(content);
+  const normalized = normalizeCommonMarkdownInput(collapseSimpleCodeFences(content));
   const escapedRepaired = restoreEscapedInlineMathDelimiters(normalized);
   const latexNormalized = normalizeLatexMathDelimiters(escapedRepaired);
   const stabilized = applyStreamingMathStabilizer(latexNormalized);
@@ -364,7 +399,8 @@ export function preprocessMarkdownContent(
   enableMath: boolean,
   isStreaming = false,
 ): string {
-  const normalized = splitMarkdownByCode(content)
+  const collapsed = collapseSimpleCodeFences(content);
+  const normalized = splitMarkdownByCode(collapsed)
     .map((segment) => {
       if (!segment.text || segment.isCode) return segment.text;
       return restoreEscapedInlineMathDelimiters(normalizeCommonMarkdownInput(segment.text));

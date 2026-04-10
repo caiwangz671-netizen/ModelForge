@@ -21,7 +21,26 @@ MAX_PULL_RETRIES = 3
 RETRY_BASE_SECONDS = 2.0
 RETRY_MAX_SECONDS = 15.0
 SPEED_ALPHA = 0.35
+MAX_CONCURRENT_PULLS = 1
 ACTIVE_DOWNLOAD_STATUSES = ("queued", "downloading", "paused")
+
+PREPARING_STATUS_TOKENS = (
+    "pulling manifest",
+    "retrieving manifest",
+    "reading model metadata",
+)
+ASSEMBLY_STATUS_TOKENS = (
+    "creating system layer",
+    "creating new layer",
+    "using existing layer",
+    "using already created layer",
+)
+FINALIZING_STATUS_TOKENS = (
+    "verifying sha256 digest",
+    "verifying conversion",
+    "writing manifest",
+    "removing any unused layers",
+)
 
 
 class DownloadRequest(BaseModel):
@@ -91,6 +110,76 @@ def _normalize_download_task(task: Dict[str, Any]) -> Dict[str, Any]:
     status_text = normalized.get("status_text")
     normalized["status_text"] = str(status_text).strip() if status_text not in (None, "") else str(normalized.get("status") or "")
     return normalized
+
+
+def _classify_pull_phase(status_text: str | None) -> str:
+    text = str(status_text or "").strip().lower()
+    if not text:
+        return "downloading"
+    if text == "success":
+        return "completed"
+    if any(token in text for token in FINALIZING_STATUS_TOKENS):
+        return "finalizing"
+    if any(token in text for token in ASSEMBLY_STATUS_TOKENS):
+        return "assembling"
+    if any(token in text for token in PREPARING_STATUS_TOKENS):
+        return "preparing"
+    return "downloading"
+
+
+def _present_pull_status(status_text: str | None) -> str:
+    phase = _classify_pull_phase(status_text)
+    if phase == "preparing":
+        return "preparing download"
+    if phase == "assembling":
+        return "assembling model layers"
+    if phase == "finalizing":
+        return "verifying and finalizing"
+    if phase == "completed":
+        return "completed"
+    return str(status_text or "downloading").strip() or "downloading"
+
+
+async def _drain_download_queue() -> None:
+    async with download_start_lock:
+        active_workers = 0
+        for task_id, worker in list(download_workers.items()):
+            if worker.done():
+                download_workers.pop(task_id, None)
+                continue
+            active_workers += 1
+
+        available_slots = max(0, MAX_CONCURRENT_PULLS - active_workers)
+        if available_slots <= 0:
+            return
+
+        queued_tasks = await execute_query(
+            """
+            SELECT * FROM download_tasks
+            WHERE status = 'queued'
+            ORDER BY created_at ASC
+            """
+        )
+
+        for task in queued_tasks:
+            if available_slots <= 0:
+                break
+
+            task_id = str(task.get("id") or "")
+            if not task_id:
+                continue
+
+            existing = download_workers.get(task_id)
+            if existing and not existing.done():
+                continue
+
+            model_ref = _resolve_model_name(
+                str(task.get("model_name") or ""),
+                str(task.get("model_version") or "latest"),
+            )
+            worker = asyncio.create_task(_download_model(task_id, model_ref))
+            download_workers[task_id] = worker
+            available_slots -= 1
 
 
 async def _persist_download_state(task_id: str, state: Dict[str, Any], *, status: Optional[str] = None, error: Optional[str] = None) -> None:
@@ -206,8 +295,6 @@ async def list_downloads():
 async def start_download(request: DownloadRequest):
     """Start a new download"""
     try:
-        model_ref = _resolve_model_name(request.model_name, request.model_version)
-
         async with download_start_lock:
             existing_task = await _find_active_download_task(request.model_name, request.model_version)
             if existing_task:
@@ -230,7 +317,21 @@ async def start_download(request: DownloadRequest):
                    (id, model_name, model_version, status, progress, downloaded_size, total_size,
                     speed, eta, status_text, retry_count, created_at, updated_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (task_id, request.model_name, request.model_version, "queued", 0, 0, 0, 0, 0, "queued", 0, now, now)
+                (
+                    task_id,
+                    request.model_name,
+                    request.model_version,
+                    "queued",
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    "waiting in queue",
+                    0,
+                    now,
+                    now,
+                )
             )
 
             # Initialize progress tracking
@@ -240,13 +341,11 @@ async def start_download(request: DownloadRequest):
                 "total_size": 0,
                 "speed": 0,
                 "eta": 0,
-                "status_text": "queued",
+                "status_text": "waiting in queue",
                 "retry_count": 0,
             }
 
-            # Start download in background
-            worker = asyncio.create_task(_download_model(task_id, model_ref))
-            download_workers[task_id] = worker
+        await _drain_download_queue()
 
         return {"id": task_id, "message": "Download started", "duplicate": False}
     except Exception as e:
@@ -259,13 +358,15 @@ async def _download_model(task_id: str, model_name: str):
         last_completed: Optional[int] = None
         last_sample_ts: Optional[float] = None
         ema_speed = 0.0
+        last_nonzero_speed = 0.0
+        last_total: Optional[int] = None
 
         for attempt in range(MAX_PULL_RETRIES):
             if attempt > 0:
                 delay = _retry_delay(attempt)
                 download_progress[task_id] = {
                     **download_progress.get(task_id, {}),
-                    "status_text": f"网络异常，{int(delay)}s 后重试 ({attempt}/{MAX_PULL_RETRIES - 1})",
+                    "status_text": f"network issue, retrying in {int(delay)}s ({attempt}/{MAX_PULL_RETRIES - 1})",
                     "retry_count": attempt,
                 }
                 await _persist_download_state(task_id, download_progress[task_id], status="queued")
@@ -293,7 +394,7 @@ async def _download_model(task_id: str, model_name: str):
                         should_retry = True
                         download_progress[task_id] = {
                             **download_progress.get(task_id, {}),
-                            "status_text": f"网络错误，准备重试 ({attempt + 1}/{MAX_PULL_RETRIES - 1})",
+                            "status_text": f"network error, preparing retry ({attempt + 1}/{MAX_PULL_RETRIES - 1})",
                             "retry_count": attempt + 1,
                             "error": error_text,
                         }
@@ -309,13 +410,19 @@ async def _download_model(task_id: str, model_name: str):
                     return
 
                 status = str(data.get("status", "")).strip()
+                phase = _classify_pull_phase(status)
 
                 if "completed" in data and "total" in data:
                     completed = int(data.get("completed") or 0)
                     total = int(data.get("total") or 0)
 
-                    # Some pull streams reset "completed" per blob; reset local speed window.
-                    if last_completed is not None and completed < last_completed:
+                    # Ollama reports pull progress per blob/layer. When it switches blobs
+                    # the counters can reset, so restart the delta window but keep the last
+                    # meaningful transfer speed for display smoothing.
+                    if (
+                        last_completed is not None
+                        and (completed < last_completed or (last_total is not None and total != last_total))
+                    ):
                         last_completed = None
                         last_sample_ts = None
                         ema_speed = 0.0
@@ -330,29 +437,39 @@ async def _download_model(task_id: str, model_name: str):
                                 if ema_speed <= 0
                                 else (SPEED_ALPHA * instant_speed + (1 - SPEED_ALPHA) * ema_speed)
                             )
+                            last_nonzero_speed = ema_speed
 
                     last_completed = completed
                     last_sample_ts = now
+                    last_total = total
 
                     progress = (completed / total * 100) if total > 0 else 0.0
-                    eta = int((total - completed) / ema_speed) if total > completed and ema_speed > 1 else 0
+                    display_speed = ema_speed if ema_speed > 0 else last_nonzero_speed
+                    eta = int((total - completed) / display_speed) if total > completed and display_speed > 1 else 0
 
                     download_progress[task_id] = {
                         **download_progress.get(task_id, {}),
                         "progress": round(progress, 1),
                         "downloaded_size": completed,
                         "total_size": total,
-                        "speed": round(ema_speed, 2),
+                        "speed": round(display_speed, 2),
                         "eta": eta,
-                        "status_text": status or "downloading",
+                        "status_text": _present_pull_status(status),
                         "retry_count": attempt,
                         "error": None,
                     }
                     await _persist_download_state(task_id, download_progress[task_id], status="downloading", error=None)
                 elif status:
+                    latest = download_progress.get(task_id, {})
+                    progress = float(latest.get("progress") or 0)
+                    if phase == "finalizing" and progress >= 90:
+                        progress = max(progress, 99.0)
                     download_progress[task_id] = {
-                        **download_progress.get(task_id, {}),
-                        "status_text": status,
+                        **latest,
+                        "progress": progress,
+                        "speed": 0,
+                        "eta": 0,
+                        "status_text": _present_pull_status(status),
                         "retry_count": attempt,
                     }
                     await _persist_download_state(task_id, download_progress[task_id], status="downloading", error=None)
@@ -387,7 +504,7 @@ async def _download_model(task_id: str, model_name: str):
             if attempt < MAX_PULL_RETRIES - 1:
                 download_progress[task_id] = {
                     **download_progress.get(task_id, {}),
-                    "status_text": f"下载流中断，准备重试 ({attempt + 1}/{MAX_PULL_RETRIES - 1})",
+                    "status_text": f"download stream interrupted, preparing retry ({attempt + 1}/{MAX_PULL_RETRIES - 1})",
                     "retry_count": attempt + 1,
                 }
                 await _persist_download_state(task_id, download_progress[task_id], status="queued")
@@ -418,6 +535,35 @@ async def _download_model(task_id: str, model_name: str):
         await _persist_download_state(task_id, download_progress[task_id], status="failed", error=str(e))
     finally:
         download_workers.pop(task_id, None)
+        await _drain_download_queue()
+
+
+@router.delete("/history")
+async def clear_download_history():
+    """Delete completed/failed/cancelled download history without touching active tasks."""
+    try:
+        active_tasks = await execute_query(
+            """
+            SELECT id FROM download_tasks
+            WHERE status IN ('queued', 'downloading', 'paused')
+            """
+        )
+        active_ids = {str(task.get("id") or "") for task in active_tasks if task.get("id")}
+
+        deleted = await execute_update(
+            """
+            DELETE FROM download_tasks
+            WHERE status NOT IN ('queued', 'downloading', 'paused')
+            """
+        )
+
+        for task_id in list(download_progress.keys()):
+            if task_id not in active_ids:
+                download_progress.pop(task_id, None)
+
+        return {"message": "Download history cleared", "deleted": deleted}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/{task_id}")
@@ -455,6 +601,7 @@ async def cancel_download(task_id: str):
             "status_text": "cancelled",
         }
         await _persist_download_state(task_id, download_progress[task_id], status="cancelled")
+        await _drain_download_queue()
         return {"message": "Download cancelled"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

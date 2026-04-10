@@ -52,6 +52,7 @@ interface DownloadState {
   fetchTasks: () => Promise<void>;
   startDownload: (modelName: string, modelVersion?: string) => Promise<StartDownloadResult>;
   cancelDownload: (taskId: string) => Promise<void>;
+  clearHistory: () => Promise<number>;
   pollTasks: () => void;
 }
 
@@ -93,6 +94,17 @@ export const useDownloadStore = create<DownloadState>()((set, get) => ({
       await get().fetchTasks();
     } catch {
       set({ error: 'Failed to cancel download' });
+    }
+  },
+
+  clearHistory: async () => {
+    try {
+      const response = await downloadsApi.clearHistory();
+      await get().fetchTasks();
+      return Number(response.data?.deleted || 0);
+    } catch {
+      set({ error: 'Failed to clear download history' });
+      throw new Error('Failed to clear download history');
     }
   },
 

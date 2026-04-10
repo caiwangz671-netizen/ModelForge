@@ -1,4 +1,4 @@
-import { motion } from 'framer-motion';
+import { motion, useReducedMotion } from 'framer-motion';
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
@@ -8,16 +8,18 @@ interface PageTransitionProps {
 }
 
 export function PageTransition({ children, className }: PageTransitionProps) {
+    const prefersReducedMotion = useReducedMotion();
+
     return (
         <motion.div
-            initial={{ opacity: 0, y: 18, scale: 0.992, filter: 'blur(10px)' }}
-            animate={{ opacity: 1, y: 0, scale: 1, filter: 'blur(0px)' }}
-            exit={{ opacity: 0, y: -14, scale: 0.996, filter: 'blur(8px)' }}
+            initial={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, x: 18, scale: 0.998 }}
+            animate={prefersReducedMotion ? { opacity: 1 } : { opacity: 1, x: 0, scale: 1 }}
+            exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, x: -12, scale: 0.998 }}
             transition={{
-                duration: 0.42,
+                duration: prefersReducedMotion ? 0.16 : 0.24,
                 ease: [0.22, 1, 0.36, 1]
             }}
-            className={cn('will-change-transform', className)}
+            className={cn('will-change-transform h-full', className)}
         >
             {children}
         </motion.div>

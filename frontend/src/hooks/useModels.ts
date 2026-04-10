@@ -39,10 +39,10 @@ export function stripEmojis(text?: string | null): string {
 export function useModels() {
     const { t } = useTranslation();
     const modelStore = useModelStore();
-    const { startDownload, tasks: downloadTasks, fetchTasks } = useDownloadStore();
+    const { startDownload, tasks: downloadTasks, fetchTasks, cancelDownload, clearHistory } = useDownloadStore();
 
     const [searchQuery, setSearchQuery] = useState('');
-    const [activeTab, setActiveTab] = useState<'all' | 'downloaded' | 'available' | 'recommended'>('recommended');
+    const [activeTab, setActiveTab] = useState<'all' | 'downloaded' | 'available' | 'recommended' | 'transfers'>('recommended');
     const [selectedFamilies, setSelectedFamilies] = useState<string[]>([]);
     const [selectedCapabilities, setSelectedCapabilities] = useState<string[]>([]);
     const [hideDownloadedInLibrary, setHideDownloadedInLibrary] = useState(true);
@@ -72,6 +72,7 @@ export function useModels() {
             clearInterval(timer);
             clearInterval(libraryRefreshTimer);
         };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const handleDownload = async (modelName: string) => {
@@ -275,11 +276,10 @@ export function useModels() {
         })
         .sort((a, b) => parsePullCount(b.pull_count) - parsePullCount(a.pull_count));
 
-    const currentTags: LibraryModelTag[] = downloadDialogModel
-        ? modelStore.libraryTags[downloadDialogModel.name] || []
-        : [];
-
     const tagsToDisplay: LibraryModelTag[] = useMemo(() => {
+        const currentTags: LibraryModelTag[] = downloadDialogModel
+            ? modelStore.libraryTags[downloadDialogModel.name] || []
+            : [];
         if (!downloadDialogModel) return [];
         if (currentTags.length > 0) return currentTags;
         return [
@@ -290,7 +290,7 @@ export function useModels() {
                 library_url: downloadDialogModel.library_url,
             },
         ];
-    }, [downloadDialogModel, currentTags]);
+    }, [downloadDialogModel, modelStore.libraryTags]);
 
     const runningCount = modelStore.runningModels.length;
     const downloadedCount = modelStore.models.length;
@@ -317,6 +317,7 @@ export function useModels() {
             runningCount,
             downloadedCount,
             availableCount,
+            downloadTasks,
             modelStore,
         },
         actions: {
@@ -340,6 +341,8 @@ export function useModels() {
             isModelResident,
             isModelDownloaded,
             isModelDownloading,
+            cancelDownload,
+            clearHistory,
             formatBytes,
         },
     };

@@ -62,7 +62,7 @@ export function useAutoModelManager({
                 console.warn('Auto-load model failed:', err);
             });
         }
-    }, [enabled, autoLoadEnabled, currentModel, runningModels, residentModels, loadModel, normalizeModelName, isResidentModel]);
+    }, [enabled, autoLoadEnabled, currentModel, runningModels, residentModels, loadModel, isResidentModel]);
 
     // Idle timeout unload
     useEffect(() => {

@@ -93,6 +93,7 @@ export function Memory() {
       fetchMemories();
     }, 250);
     return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchQuery, selectedType]);
 
   const fetchMemoryStatus = async () => {

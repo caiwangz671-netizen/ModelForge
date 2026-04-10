@@ -124,7 +124,15 @@ export function MarkdownRenderer({
       const language = match ? match[1] : 'text';
       const code = String(children).replace(/\n$/, '');
 
-      if (!inline) {
+      // Detect whether this is truly inline:
+      // 1. Explicitly marked inline by react-markdown
+      // 2. Single-line, short code without a real language → render as inline pill
+      const isPlainLang = !match || language === 'text' || language === 'plaintext';
+      const isSingleLine = !code.includes('\n');
+      const isShort = code.length <= 80;
+      const treatAsInline = inline || (isPlainLang && isSingleLine && isShort);
+
+      if (!treatAsInline) {
         if (enableMath && shouldRenderLatexFenceAsMath(language, code)) {
           const html = renderLatexFenceAsMath(code);
           if (html) {
@@ -138,7 +146,10 @@ export function MarkdownRenderer({
 
       return (
         <code
-          className={cn('px-1.5 py-0.5 rounded text-sm font-mono bg-muted', codeClassName)}
+          className={cn(
+            'inline-code rounded-md bg-muted/70 px-1.5 py-0.5 text-[0.85em] font-mono text-foreground/90 mx-0.5 border border-border/40',
+            codeClassName,
+          )}
           {...props}
         >
           {children}
@@ -150,54 +161,71 @@ export function MarkdownRenderer({
     },
     table({ children }: ChildProps) {
       return (
-        <div className="overflow-x-auto my-4">
-          <table className="w-full border-collapse">{children}</table>
+        <div className="my-5 overflow-x-auto rounded-2xl border border-border/70 bg-card/55 shadow-sm">
+          <table className="w-full border-collapse text-sm">{children}</table>
         </div>
       );
     },
     th({ children }: ChildProps) {
-      return <th className="border px-4 py-2 text-left font-semibold bg-muted">{children}</th>;
+      return <th className="border-b border-border/70 bg-muted/55 px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">{children}</th>;
     },
     td({ children }: ChildProps) {
-      return <td className="border px-4 py-2">{children}</td>;
+      return <td className="border-b border-border/60 px-4 py-3 align-top last:border-b-0">{children}</td>;
     },
     blockquote({ children }: ChildProps) {
       return (
-        <blockquote className="border-l-4 border-primary pl-4 my-4 italic text-muted-foreground">
+        <blockquote className="my-5 rounded-r-2xl border-l-[3px] border-primary/70 bg-muted/28 px-4 py-3 text-[0.96rem] italic leading-7 text-muted-foreground">
           {children}
         </blockquote>
       );
     },
     a({ children, href }: AnchorProps) {
       return (
-        <a href={href} className="text-primary hover:underline" target="_blank" rel="noopener noreferrer">
+        <a
+          href={href}
+          className="font-medium text-primary underline-offset-4 transition-colors hover:text-primary/80 hover:underline"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
           {children}
         </a>
       );
     },
     h1({ children }: ChildProps) {
-      return <h1 className="text-2xl font-bold mt-8 mb-4">{children}</h1>;
+      return <h1 className="mt-8 mb-4 text-2xl font-semibold tracking-tight text-foreground">{children}</h1>;
     },
     h2({ children }: ChildProps) {
-      return <h2 className="text-xl font-semibold mt-6 mb-3">{children}</h2>;
+      return <h2 className="mt-7 mb-3 text-xl font-semibold tracking-tight text-foreground">{children}</h2>;
     },
     h3({ children }: ChildProps) {
-      return <h3 className="text-lg font-medium mt-4 mb-2">{children}</h3>;
+      return <h3 className="mt-6 mb-2 text-lg font-semibold text-foreground">{children}</h3>;
     },
     ul({ children }: ChildProps) {
-      return <ul className="list-disc list-inside my-2 space-y-1">{children}</ul>;
+      return <ul className="my-3 list-disc space-y-1.5 pl-6">{children}</ul>;
     },
     ol({ children }: ChildProps) {
-      return <ol className="list-decimal list-inside my-2 space-y-1">{children}</ol>;
+      return <ol className="my-3 list-decimal space-y-1.5 pl-6">{children}</ol>;
     },
     li({ children }: ChildProps) {
-      return <li className="ml-4">{children}</li>;
+      return <li className="pl-1 leading-7 marker:text-muted-foreground">{children}</li>;
     },
     p({ children }: ChildProps) {
-      return <p className="my-2 leading-relaxed break-words">{children}</p>;
+      return <p className="my-3 break-words leading-7 text-[0.98rem] text-foreground/92">{children}</p>;
     },
     hr() {
-      return <hr className="my-6 border-muted" />;
+      return <hr className="my-6 border-border/70" />;
+    },
+    img({ src, alt }: React.ImgHTMLAttributes<HTMLImageElement>) {
+      return (
+        <figure className="my-5 overflow-hidden rounded-2xl border border-border/70 bg-card/50 shadow-sm">
+          <img src={src} alt={alt} className="max-h-[520px] w-full object-contain bg-black/10" />
+          {alt ? (
+            <figcaption className="border-t border-border/70 px-4 py-2 text-xs text-muted-foreground">
+              {alt}
+            </figcaption>
+          ) : null}
+        </figure>
+      );
     },
   }), [enableMath]);
 
@@ -221,11 +249,13 @@ export function MarkdownRenderer({
     <div
       ref={containerRef}
       className={cn(
-        'prose prose-sm dark:prose-invert max-w-none',
-        'prose-headings:font-semibold',
+        'prose prose-sm max-w-none dark:prose-invert',
+        'prose-headings:font-semibold prose-headings:text-foreground',
+        'prose-strong:text-foreground prose-em:text-foreground/90',
         'prose-a:text-primary',
-        'prose-code:before:content-none prose-code:after:content-none',
-        'prose-pre:overflow-x-auto',
+        'prose-code:before:content-none prose-code:after:content-none prose-code:font-semibold',
+        'prose-pre:overflow-x-auto prose-pre:border prose-pre:border-border/70 prose-pre:bg-card/70 prose-pre:shadow-sm',
+        'prose-p:my-3 prose-p:leading-7 prose-ul:my-3 prose-ol:my-3 prose-li:my-1.5',
         '[&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden',
         '[&_.katex-error]:text-muted-foreground [&_.katex-error]:border-none',
         className,

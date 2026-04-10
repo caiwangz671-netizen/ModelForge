@@ -171,6 +171,7 @@ async def get_hardware_info():
 
     gpu_info = None
     gpu_vram_bytes = None
+    gpu_vram_used = None
     vm_total_override = None
 
     def _darwin_available_memory_bytes() -> int | None:
@@ -256,7 +257,7 @@ async def get_hardware_info():
     # Try NVIDIA GPU
     try:
         result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+            ["nvidia-smi", "--query-gpu=name,memory.total,memory.used", "--format=csv,noheader,nounits"],
             capture_output=True, text=True, timeout=5,
         )
         if result.returncode == 0 and result.stdout.strip():
@@ -264,6 +265,8 @@ async def get_hardware_info():
             gpu_info = parts[0].strip()
             if len(parts) > 1:
                 gpu_vram_bytes = int(float(parts[1].strip()) * 1024 * 1024)  # MiB -> bytes
+            if len(parts) > 2:
+                gpu_vram_used = int(float(parts[2].strip()) * 1024 * 1024)   # MiB -> bytes
     except Exception:
         pass
 
@@ -302,6 +305,7 @@ async def get_hardware_info():
                     # On Apple Silicon, GPU uses unified memory = total physical RAM
                     if gpu_info and any(x in gpu_info for x in ["Apple", "M1", "M2", "M3", "M4"]):
                         gpu_vram_bytes = vm_total
+                        gpu_vram_used = vm_used
             except Exception:
                 pass
 
@@ -323,4 +327,5 @@ async def get_hardware_info():
         "os": platform.system(),
         "gpu_name": gpu_info,
         "gpu_vram_bytes": gpu_vram_bytes,
+        "gpu_vram_used": gpu_vram_used,
     }

@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { chatApi } from '@/services/api';
 import { buildAttachmentDisplayContent } from '@/lib/chatAttachments';
-import type { ChatAttachment, Conversation, Message, RagReference, ToolCall, ToolCallType } from '@/types';
+import type { ChatAttachment, Conversation, Message, RagReference, ToolCall, ToolCallType, UsageStats } from '@/types';
 
 function normalizeToolType(rawType: unknown): ToolCallType {
   const value = String(rawType ?? '').trim();
@@ -458,6 +458,7 @@ export const useChatStore = create<ChatState>()(
           let resolvedConversationId = currentConversation?.id || '';
           let ragReferences: RagReference[] = [];
           let toolCalls: ToolCall[] = [];
+          let usageStats: UsageStats | undefined;
 
           let rafPending = false;
           let latestMessage = '';
@@ -489,6 +490,7 @@ export const useChatStore = create<ChatState>()(
                 thinking: thinkingContent || undefined,
                 tool_calls: toolCalls,
                 rag_references: ragReferences,
+                usage_stats: usageStats,
               };
               set((state) => ({
                 messages: [...state.messages, assistantMessage],
@@ -578,6 +580,10 @@ export const useChatStore = create<ChatState>()(
                 .filter((item: ToolCall | null): item is ToolCall => Boolean(item));
             }
 
+            if (data.usage_stats && typeof data.usage_stats === 'object') {
+              usageStats = data.usage_stats as UsageStats;
+            }
+
             if (data.done) {
               doneReceived = true;
               finalizeAssistantMessage();
@@ -620,6 +626,17 @@ export const useChatStore = create<ChatState>()(
                   normalized.messages || [],
                   nextMessages,
                 );
+                // DB doesn't store usage_stats — carry it over from the in-memory
+                // assistant message so the verbose stats row keeps showing.
+                if (usageStats) {
+                  const lastAssistantIdx = mergedMessages.map((m) => m.role).lastIndexOf('assistant');
+                  if (lastAssistantIdx >= 0) {
+                    mergedMessages[lastAssistantIdx] = {
+                      ...mergedMessages[lastAssistantIdx],
+                      usage_stats: usageStats,
+                    };
+                  }
+                }
                 set((state) => ({
                   currentConversation: normalized,
                   messages: normalized.messages && normalized.messages.length > 0

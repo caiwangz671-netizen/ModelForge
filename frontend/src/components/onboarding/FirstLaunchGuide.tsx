@@ -83,7 +83,7 @@ export function FirstLaunchGuide() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(() => !hasCompletedFirstLaunchGuide());
   const [currentStep, setCurrentStep] = useState(0);
   const [ollamaStatus, setOllamaStatus] = useState<DesktopOllamaStatus | null>(null);
   const [ollamaHealth, setOllamaHealth] = useState<OllamaHealthState>('unknown');
@@ -226,10 +226,6 @@ export function FirstLaunchGuide() {
   ]), [navigate, t]);
 
   useEffect(() => {
-    if (!hasCompletedFirstLaunchGuide()) {
-      setOpen(true);
-    }
-
     const handleOpen = () => {
       setCurrentStep(0);
       setOpen(true);
@@ -242,7 +238,10 @@ export function FirstLaunchGuide() {
 
   useEffect(() => {
     if (!open) return;
-    void syncOllamaState();
+    const timer = setTimeout(() => {
+      void syncOllamaState();
+    }, 0);
+    return () => clearTimeout(timer);
   }, [open, syncOllamaState]);
 
   useEffect(() => {
@@ -256,11 +255,16 @@ export function FirstLaunchGuide() {
   useEffect(() => {
     const nextIndex = steps.findIndex((step) => step.key === 'chat');
     if (currentStep >= steps.length) {
-      setCurrentStep(Math.max(0, steps.length - 1));
-      return;
+      const timer = setTimeout(() => {
+        setCurrentStep(Math.max(0, steps.length - 1));
+      }, 0);
+      return () => clearTimeout(timer);
     }
     if (!shouldShowOllamaStep && steps[currentStep]?.key === 'ollama' && nextIndex >= 0) {
-      setCurrentStep(nextIndex);
+      const timer = setTimeout(() => {
+        setCurrentStep(nextIndex);
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [currentStep, shouldShowOllamaStep, steps]);
 
@@ -302,7 +306,10 @@ export function FirstLaunchGuide() {
     }
 
     autoInstallTriggeredRef.current = true;
-    void handleInstallOllama(true);
+    const timer = setTimeout(() => {
+      void handleInstallOllama(true);
+    }, 0);
+    return () => clearTimeout(timer);
   }, [canInstallDesktopOllama, currentStep, handleInstallOllama, ollamaStatus, open, steps]);
 
   const closeGuide = () => {

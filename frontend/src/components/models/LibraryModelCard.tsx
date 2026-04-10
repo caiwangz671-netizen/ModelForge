@@ -7,6 +7,7 @@ import {
     ExternalLink,
     CheckCircle2,
     Sparkles,
+    Loader2,
 } from 'lucide-react';
 import { stripEmojis } from '@/hooks/useModels';
 import type { LibraryModel } from '@/types';
@@ -14,6 +15,7 @@ import type { LibraryModel } from '@/types';
 interface LibraryModelCardProps {
     model: LibraryModel;
     isModelDownloaded: (name: string) => boolean;
+    isModelDownloading: (name: string) => boolean;
     handleOpenLibraryModel: (model: LibraryModel) => void;
     index?: number;
 }
@@ -21,11 +23,13 @@ interface LibraryModelCardProps {
 export function LibraryModelCard({
     model,
     isModelDownloaded,
+    isModelDownloading,
     handleOpenLibraryModel,
     index = 0,
 }: LibraryModelCardProps) {
     const { t } = useTranslation();
     const hasBaseVersion = isModelDownloaded(model.name) || isModelDownloaded(`${model.name}:latest`);
+    const isDownloading = isModelDownloading(model.name) || isModelDownloading(`${model.name}:latest`);
 
     return (
         <motion.div
@@ -73,12 +77,17 @@ export function LibraryModelCard({
 
                     {/* Status indicator */}
                     <div className="h-6 flex items-center">
-                        {hasBaseVersion && (
+                        {isDownloading ? (
+                            <Badge className="bg-sky-500/10 text-sky-700 dark:text-sky-300 hover:bg-sky-500/15 border-transparent shadow-none w-fit text-[11px] h-6 px-2 py-0 font-normal transition-colors">
+                                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                                {t('models.downloadInProgress')}
+                            </Badge>
+                        ) : hasBaseVersion ? (
                             <Badge className="bg-green-600/10 text-green-700 dark:text-green-400 hover:bg-green-600/20 border-transparent shadow-none w-fit text-[11px] h-6 px-2 py-0 font-normal transition-colors">
                                 <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
                                 {t('models.hasBaseVersion')}
                             </Badge>
-                        )}
+                        ) : null}
                     </div>
 
                     <div className="mt-auto pt-2">
@@ -99,10 +108,20 @@ export function LibraryModelCard({
                             <Button
                                 size="sm"
                                 className="flex-1 rounded-lg text-[13px] font-medium h-9 shadow-sm transition-transform active:scale-95"
+                                disabled={isDownloading}
                                 onClick={() => handleOpenLibraryModel(model)}
                             >
-                                <Sparkles className="h-3.5 w-3.5 mr-1.5" />
-                                {t('models.download')}
+                                {isDownloading ? (
+                                    <>
+                                        <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                                        {t('models.downloadInProgress')}
+                                    </>
+                                ) : (
+                                    <>
+                                        <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+                                        {t('models.download')}
+                                    </>
+                                )}
                             </Button>
                         </div>
                     </div>

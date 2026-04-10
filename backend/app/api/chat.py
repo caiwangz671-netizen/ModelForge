@@ -324,7 +324,7 @@ def _build_attachment_context(
 
         raise HTTPException(status_code=400, detail=f"Unsupported attachment type: {kind or 'unknown'}")
 
-    display_note = f"[attachments: {', '.join(display_names)}]" if display_names else ""
+    display_note = "" # Hide redundant textual representation
     model_note = "\n\n".join(section for section in model_sections if section).strip()
     return {
         "display_note": display_note,
@@ -966,6 +966,7 @@ async def chat_completion(request: ChatRequest):
             thinking_visible_content = ""
             final_thinking: Optional[str] = None
             tool_round = 0
+            ollama_usage_stats: Optional[dict] = None
 
             while True:
                 round_assistant_raw = ""
@@ -1050,6 +1051,15 @@ async def chat_completion(request: ChatRequest):
 
                         if chunk.get("done"):
                             round_done = True
+                            ollama_usage_stats = {
+                                k: chunk[k]
+                                for k in (
+                                    "total_duration", "load_duration",
+                                    "prompt_eval_count", "prompt_eval_duration",
+                                    "eval_count", "eval_duration",
+                                )
+                                if k in chunk
+                            } or None
                             break
 
                     if retry_without_think:
@@ -1364,7 +1374,7 @@ async def chat_completion(request: ChatRequest):
                         user_content=latest_user_content,
                     )
 
-                yield f"data: {json.dumps({'done': True, 'conversation_id': conversation_id, 'thinking_complete': True, 'final_content': final_main, 'final_thinking': final_thinking, 'rag_references': rag_references, 'tool_calls': executed_tool_calls}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'done': True, 'conversation_id': conversation_id, 'thinking_complete': True, 'final_content': final_main, 'final_thinking': final_thinking, 'rag_references': rag_references, 'tool_calls': executed_tool_calls, 'usage_stats': ollama_usage_stats}, ensure_ascii=False)}\n\n"
                 return
 
         except Exception as e:

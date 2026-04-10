@@ -19,13 +19,13 @@ from app.services.ollama import ollama_service
 
 
 def _parse_metadata(raw: Any) -> Dict[str, Any]:
-    if raw is None:
+    if not raw:
         return {}
     if isinstance(raw, dict):
         return raw
     if isinstance(raw, str):
         text = raw.strip()
-        if not text:
+        if not text or text[0] != '{':
             return {}
         try:
             return json.loads(text)
@@ -33,20 +33,19 @@ def _parse_metadata(raw: Any) -> Dict[str, Any]:
             # Backward compatibility: old rows used str(dict)
             try:
                 parsed = ast.literal_eval(text)
-                if isinstance(parsed, dict):
-                    return parsed
+                return parsed if isinstance(parsed, dict) else {}
             except Exception:
                 return {}
     return {}
 
 
 def _parse_embedding(raw: Any) -> Optional[List[float]]:
-    if raw is None:
+    if not raw:
         return None
     values: Any = raw
     if isinstance(raw, str):
         text = raw.strip()
-        if not text:
+        if not text or text[0] != '[':
             return None
         try:
             values = json.loads(text)
@@ -59,13 +58,10 @@ def _parse_embedding(raw: Any) -> Optional[List[float]]:
     if not isinstance(values, list):
         return None
 
-    vector: List[float] = []
-    for item in values:
-        try:
-            vector.append(float(item))
-        except (TypeError, ValueError):
-            return None
-    return vector if vector else None
+    try:
+        return [float(item) for item in values]
+    except (TypeError, ValueError):
+        return None
 
 
 def _cosine_similarity(a: List[float], b: List[float]) -> float:
@@ -92,6 +88,13 @@ class MemoryService:
     RECALL_CUE_KEYWORDS = (
         "记得", "忘了", "还记得", "我是谁", "我叫什么", "我的名字",
         "remember", "forgot", "who am i", "what do you know about me",
+    )
+    PERSONAL_MEMORY_CUE_KEYWORDS = (
+        "我是谁", "我叫什么", "我的名字", "关于我", "介绍一下我", "我的个人信息",
+        "我来自", "我的偏好", "我喜欢", "我不喜欢", "我更喜欢", "我习惯",
+        "what is my name", "who am i", "tell me about me", "about me",
+        "my profile", "my personal info", "my preference", "my preferences",
+        "what language do i prefer", "what do you know about me",
     )
     MEMORY_QUERY_CUE_KEYWORDS = (
         "记忆", "记得", "之前", "上次", "历史", "知识库", "资料", "文档", "引用", "参考",
@@ -136,6 +139,18 @@ class MemoryService:
         if not text:
             return False
         return any(keyword in text for keyword in cls.MEMORY_QUERY_CUE_KEYWORDS)
+
+    @classmethod
+    def _is_personal_memory_query(cls, query: str) -> bool:
+        text = (query or "").strip().lower()
+        if not text:
+            return False
+        if any(keyword in text for keyword in cls.PERSONAL_MEMORY_CUE_KEYWORDS):
+            return True
+        return (
+            ("我" in text and any(keyword in text for keyword in ("名字", "个人信息", "偏好", "喜欢", "来自", "介绍")))
+            or ("my " in text and any(keyword in text for keyword in ("name", "profile", "preference", "preferences", "about")))
+        )
 
     @classmethod
     def _query_terms(cls, query: str) -> List[str]:
@@ -385,6 +400,23 @@ class MemoryService:
             (limit,),
         )
         return self._normalize_memory_rows(items)
+
+    async def _recent_category_memories(self, categories: List[str], limit: int) -> List[Dict[str, Any]]:
+        if not categories:
+            return []
+        recent = await self._recent_memories(max(limit * 8, 24))
+        wanted = {str(category).strip().lower() for category in categories if str(category).strip()}
+        selected: List[Dict[str, Any]] = []
+        for item in recent:
+            metadata = _parse_metadata(item.get("metadata"))
+            category = str(metadata.get("category") or "").strip().lower()
+            if category not in wanted:
+                continue
+            item["metadata"] = metadata
+            selected.append(item)
+            if len(selected) >= limit:
+                break
+        return selected
 
     async def _detect_embedding_model(self) -> Optional[str]:
         try:
@@ -651,16 +683,23 @@ class MemoryService:
         if not text:
             return []
         limit = max(limit, 1)
+        personal_query = self._is_personal_memory_query(text)
 
         keyword_fallback = await self._keyword_search_memories(text, limit)
         status = await self.get_status()
         if not status["enabled"]:
+            if keyword_fallback:
+                return keyword_fallback
+            if personal_query:
+                return await self._recent_category_memories(["user_profile", "user_preference"], limit)
             return keyword_fallback
 
         query_embedding = await self.embed_text(text)
         if query_embedding is None:
             if keyword_fallback:
                 return keyword_fallback
+            if personal_query:
+                return await self._recent_category_memories(["user_profile", "user_preference"], limit)
             if self._is_memory_recall_query(text):
                 return await self._recent_memories(limit)
             return []
@@ -687,6 +726,17 @@ class MemoryService:
         scored.sort(key=lambda x: x["score"], reverse=True)
         top = scored[:limit]
         if top:
+            if (self._is_memory_recall_query(text) or personal_query) and len(top) < limit:
+                profile_items = await self._recent_category_memories(["user_profile", "user_preference"], limit * 2)
+                seen_ids = {item.get("id") for item in top if item.get("id")}
+                for row in profile_items:
+                    row_id = row.get("id")
+                    if row_id in seen_ids:
+                        continue
+                    top.append(row)
+                    seen_ids.add(row_id)
+                    if len(top) >= limit:
+                        break
             if self._is_memory_recall_query(text) and len(top) < limit:
                 recent_items = await self._recent_memories(limit * 2)
                 seen_ids = {item.get("id") for item in top if item.get("id")}
@@ -702,6 +752,8 @@ class MemoryService:
 
         if keyword_fallback:
             return keyword_fallback
+        if personal_query:
+            return await self._recent_category_memories(["user_profile", "user_preference"], limit)
         if self._is_memory_recall_query(text):
             return await self._recent_memories(limit)
         return []
@@ -777,39 +829,81 @@ class MemoryService:
             return {"context": None, "references": []}
 
         cue_query = self._is_memory_or_rag_cue_query(text)
+        personal_query = self._is_personal_memory_query(text)
         query_terms = self._query_terms(text)
-        if only_when_relevant and not cue_query and len(query_terms) <= 1:
+
+        # RAG-first: We always try to retrieve if there is enough semantic content (terms),
+        # but we use strict thresholds later if no explicit cue was given.
+        if not query_terms:
             return {"context": None, "references": []}
 
-        memories = await self.search_memories(text, limit=max(limit * 3, 10))
+        memories = await self.search_memories(text, limit=max(limit * 3, 15))
         if not memories:
             return {"context": None, "references": []}
 
         selected: List[Dict[str, Any]] = []
+        selected_ids: set[str] = set()
         for item in memories:
             content = (item.get("content") or "").strip()
             if not content:
                 continue
+            metadata = _parse_metadata(item.get("metadata"))
+            category = str(metadata.get("category") or "").strip().lower()
             score_raw = item.get("score")
             score_val = float(score_raw) if isinstance(score_raw, (int, float)) else None
             overlap = self._lexical_overlap_ratio(text, content)
-
+            
             if only_when_relevant:
-                if score_val is not None:
-                    threshold = (
-                        self.MIN_VECTOR_SCORE_FOR_CUE_QUERY
-                        if cue_query
-                        else self.MIN_VECTOR_SCORE_FOR_AUTO_USE
-                    )
-                    if score_val < threshold and overlap < self.MIN_LEXICAL_OVERLAP_FOR_AUTO_USE:
-                        continue
-                else:
-                    if overlap < (0.14 if cue_query else self.MIN_LEXICAL_OVERLAP_FOR_AUTO_USE):
+                # If it's a profile/preference, we usually want an explicit cue, 
+                # UNLESS the semantic match is exceptionally high.
+                is_personal_data = category in {"user_profile", "user_preference"}
+                if is_personal_data and not (personal_query or cue_query):
+                    if score_val is None or score_val < 0.65: # Very high bar for silent profile retrieval
                         continue
 
-            selected.append({**item, "_overlap": overlap})
+                if score_val is not None:
+                    if cue_query or personal_query:
+                        # User explicitly asked: be generous.
+                        if score_val < self.MIN_VECTOR_SCORE_FOR_CUE_QUERY and overlap < 0.1:
+                            continue
+                    else:
+                        # Silent RAG: be much stricter to avoid injecting noise into greetings/filler.
+                        # We require either a very high semantic match (0.6+) 
+                        # OR a solid match (0.38+) with at least SOME keyword overlap.
+                        if score_val < 0.38:
+                            continue
+                        if score_val < 0.60 and overlap < 0.1:
+                            continue
+                else:
+                    # Lexical only fallback
+                    threshold = 0.14 if (cue_query or personal_query) else self.MIN_LEXICAL_OVERLAP_FOR_AUTO_USE
+                    if overlap < threshold:
+                        continue
+
+            item_id = str(item.get("id") or "")
+            if item_id and item_id in selected_ids:
+                continue
+            selected.append({**item, "metadata": metadata, "_overlap": overlap})
+            if item_id:
+                selected_ids.add(item_id)
             if len(selected) >= limit:
                 break
+
+        if personal_query and len(selected) < limit:
+            profile_items = await self._recent_category_memories(["user_profile", "user_preference"], limit * 2)
+            for item in profile_items:
+                item_id = str(item.get("id") or "")
+                if item_id and item_id in selected_ids:
+                    continue
+                content = (item.get("content") or "").strip()
+                if not content:
+                    continue
+                metadata = _parse_metadata(item.get("metadata"))
+                selected.append({**item, "metadata": metadata, "_overlap": self._lexical_overlap_ratio(text, content)})
+                if item_id:
+                    selected_ids.add(item_id)
+                if len(selected) >= limit:
+                    break
 
         if not selected:
             return {"context": None, "references": []}

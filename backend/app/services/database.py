@@ -213,6 +213,18 @@ async def init_db():
             )
         """)
 
+        # Create uploads table for general file attachments
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS uploads (
+                id TEXT PRIMARY KEY,
+                filename TEXT NOT NULL,
+                mime_type TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                storage_path TEXT NOT NULL,
+                created_at REAL NOT NULL
+            )
+        """)
+
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_computer_use_actions_session ON computer_use_actions(session_id, created_at)"
         )

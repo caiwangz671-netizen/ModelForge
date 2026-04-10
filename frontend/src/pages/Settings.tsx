@@ -66,6 +66,9 @@ export function Settings() {
     readNumberLocalStorage(LOCAL_MAX_CONTEXT_TOKENS_KEY, 8192),
   );
   const [autoUnloadAfterResponse, setAutoUnloadAfterResponse] = useState(true);
+  const [verboseStats, setVerboseStats] = useState(() =>
+    localStorage.getItem('chat:verboseStats') === 'true'
+  );
 
   // Model management settings (persisted in localStorage)
   const [smartRecommendEnabled, setSmartRecommendEnabled] = useState(() =>
@@ -127,6 +130,9 @@ export function Settings() {
   useEffect(() => {
     localStorage.setItem(LOCAL_MAX_CONTEXT_TOKENS_KEY, String(maxContextTokens));
   }, [maxContextTokens]);
+  useEffect(() => {
+    localStorage.setItem('chat:verboseStats', String(verboseStats));
+  }, [verboseStats]);
   useEffect(() => {
     saveComputerUsePreferences({
       approvalMode: computerUseApprovalMode,
@@ -271,20 +277,106 @@ export function Settings() {
           : (computerUseDefaults?.default_allowed_paths || []),
       )
     : (computerUseDefaults?.default_allowed_paths || []);
+  const currentLanguageLabel = i18n.language.startsWith('zh')
+    ? t('settings.languageZh')
+    : t('settings.languageEn');
+  const currentThemeLabel = darkMode ? t('settings.themeDark') : t('settings.themeLight');
+  const idleTimeoutLabel = idleTimeoutMinutes === 0 ? t('common.disable') : `${idleTimeoutMinutes} min`;
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-3xl font-bold tracking-tight">{t('settings.title')}</h2>
-        <p className="text-muted-foreground mt-1">
-          {t('settings.subtitle')}
-        </p>
+    <div className="space-y-5">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.08fr)_360px]">
+        <Card className="border-border/70 bg-card/82 shadow-[0_22px_60px_-54px_rgba(15,23,42,0.45)]">
+          <CardContent className="flex h-full flex-col justify-between gap-4 p-5">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                {t('settings.quickControls')}
+              </div>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+                {t('settings.quickControlsDesc')}
+              </p>
+              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-2xl border border-border/70 bg-background/60 p-4">
+                  <div className="text-xs text-muted-foreground">{t('settings.language')}</div>
+                  <div className="mt-2 text-base font-semibold">{currentLanguageLabel}</div>
+                </div>
+                <div className="rounded-2xl border border-border/70 bg-background/60 p-4">
+                  <div className="text-xs text-muted-foreground">{t('settings.darkMode')}</div>
+                  <div className="mt-2 text-base font-semibold">{currentThemeLabel}</div>
+                </div>
+                <div className="rounded-2xl border border-border/70 bg-background/60 p-4">
+                  <div className="text-xs text-muted-foreground">{t('settings.maxOutputTokens')}</div>
+                  <div className="mt-2 text-base font-semibold">{maxOutputTokens.toLocaleString()}</div>
+                </div>
+                <div className="rounded-2xl border border-border/70 bg-background/60 p-4">
+                  <div className="text-xs text-muted-foreground">{t('settings.idleTimeout')}</div>
+                  <div className="mt-2 text-base font-semibold">{idleTimeoutLabel}</div>
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button onClick={saveSettings} disabled={isLoading} className="rounded-full px-5">
+                {isLoading ? t('common.saving') : t('settings.saveRuntimeDefaults')}
+              </Button>
+              <Button variant="outline" className="rounded-full" onClick={openFirstLaunchGuide}>
+                <Sparkles className="mr-2 h-4 w-4" />
+                {t('settings.reopenWelcomeGuide')}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-border/70 bg-card/82 shadow-[0_22px_60px_-54px_rgba(15,23,42,0.45)]">
+          <CardContent className="flex h-full flex-col gap-4 p-5">
+            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              {t('settings.statusSummary')}
+            </div>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between rounded-2xl border border-border/70 bg-background/60 px-4 py-3">
+                <div>
+                  <div className="text-sm font-medium">{t('settings.ollamaService')}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {health?.ollama?.version ? `${t('settings.version')}: ${health.ollama.version}` : t('settings.notConnected')}
+                  </div>
+                </div>
+                <Badge variant={isOllamaHealthy ? 'default' : 'destructive'}>
+                  {isOllamaHealthy ? t('settings.healthy') : t('settings.unhealthy')}
+                </Badge>
+              </div>
+              <div className="flex items-center justify-between rounded-2xl border border-border/70 bg-background/60 px-4 py-3">
+                <div>
+                  <div className="text-sm font-medium">{t('settings.memoryService')}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {memoryStatus?.enabled ? t('common.enabled') : t('common.disabled')}
+                  </div>
+                </div>
+                <Badge variant={memoryStatus?.enabled ? 'default' : 'secondary'}>
+                  {memoryStatus?.enabled ? t('settings.healthy') : t('common.disabled')}
+                </Badge>
+              </div>
+              <div className="flex items-center justify-between rounded-2xl border border-border/70 bg-background/60 px-4 py-3">
+                <div>
+                  <div className="text-sm font-medium">{t('settings.computerUse')}</div>
+                  <div className="text-xs text-muted-foreground">{computerUseApprovalMode === 'hands_free' ? t('computerUse.approvalModeHandsFree') : t('computerUse.approvalModeReviewAll')}</div>
+                </div>
+                <Badge variant="outline">
+                  {computerUseCustomScope ? t('settings.customScopeOn') : t('settings.customScopeOff')}
+                </Badge>
+              </div>
+            </div>
+            <Button variant="outline" className="rounded-full" onClick={checkHealth}>
+              <RefreshCw className="mr-2 h-4 w-4" />
+              {t('settings.refreshStatus')}
+            </Button>
+          </CardContent>
+        </Card>
       </div>
 
-      <div className="grid gap-6">
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.92fr)]">
+        <div className="space-y-5">
         {/* Hardware Info */}
         {hardware && (
-          <Card className="bg-gradient-to-r from-primary/5 via-primary/3 to-transparent border-primary/20">
+          <Card className="border-primary/20 bg-gradient-to-r from-primary/5 via-primary/3 to-transparent">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Cpu className="h-5 w-5" />
@@ -329,7 +421,7 @@ export function Settings() {
         )}
 
         {/* Model Management Settings */}
-        <Card>
+        <Card className="border-border/70 bg-card/82">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Sparkles className="h-5 w-5" />
@@ -378,7 +470,7 @@ export function Settings() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="border-border/70 bg-card/82">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Workflow className="h-5 w-5" />
@@ -558,88 +650,8 @@ export function Settings() {
           </CardContent>
         </Card>
 
-        {/* Health Status */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Server className="h-5 w-5" />
-              {t('settings.systemStatus')}
-            </CardTitle>
-            <CardDescription>{t('settings.systemStatusDesc')}</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between py-2">
-              <div className="flex items-center gap-3">
-                <Database className="h-5 w-5 text-muted-foreground" />
-                <div>
-                  <p className="font-medium">{t('settings.ollamaService')}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {health?.ollama?.version ? `${t('settings.version')}: ${health.ollama.version}` : t('settings.notConnected')}
-                  </p>
-                </div>
-              </div>
-              <Badge variant={isOllamaHealthy ? 'default' : 'destructive'}>
-                {isOllamaHealthy ? (
-                  <Check className="h-3 w-3 mr-1" />
-                ) : (
-                  <X className="h-3 w-3 mr-1" />
-                )}
-                {isOllamaHealthy ? t('settings.healthy') : t('settings.unhealthy')}
-              </Badge>
-            </div>
-            <div className="flex items-center justify-between py-2">
-              <div className="flex items-center gap-3">
-                <Globe className="h-5 w-5 text-muted-foreground" />
-                <div>
-                  <p className="font-medium">{t('settings.backendApi')}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {t('settings.connectedTo', { endpoint: 'localhost:8000' })}
-                  </p>
-                </div>
-              </div>
-              <Badge variant="default">
-                <Check className="h-3 w-3 mr-1" />
-                {t('settings.healthy')}
-              </Badge>
-            </div>
-            <div className="flex items-center justify-between py-2">
-              <div className="flex items-center gap-3">
-                <Brain className="h-5 w-5 text-muted-foreground" />
-                <div>
-                  <p className="font-medium">{t('settings.memoryService')}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {memoryStatus?.enabled
-                      ? t('settings.embeddingActive', {
-                          model: memoryStatus.embedding_model || t('settings.unknownValue'),
-                        })
-                      : memoryStatus?.reason === 'configured_embedding_model_not_found'
-                        ? t('settings.embeddingConfiguredMissing', {
-                            model: memoryStatus.configured_embedding_model || t('settings.unknownValue'),
-                          })
-                        : memoryStatus?.reason === 'no_embedding_model'
-                          ? t('settings.embeddingAutoDisabled')
-                          : t('common.disabled')}
-                  </p>
-                </div>
-              </div>
-              <Badge variant={memoryStatus?.enabled ? 'default' : 'secondary'}>
-                {memoryStatus?.enabled ? (
-                  <Check className="h-3 w-3 mr-1" />
-                ) : (
-                  <X className="h-3 w-3 mr-1" />
-                )}
-                {memoryStatus?.enabled ? t('common.enabled') : t('common.disabled')}
-              </Badge>
-            </div>
-            <Button variant="outline" className="w-full" onClick={checkHealth}>
-              <RefreshCw className="h-4 w-4 mr-2" />
-              {t('settings.refreshStatus')}
-            </Button>
-          </CardContent>
-        </Card>
-
         {/* Ollama Settings */}
-        <Card>
+        <Card className="border-border/70 bg-card/82">
           <CardHeader>
             <CardTitle>{t('settings.ollamaConfig')}</CardTitle>
             <CardDescription>{t('settings.ollamaConfigDesc')}</CardDescription>
@@ -766,14 +778,105 @@ export function Settings() {
                 onCheckedChange={setAutoUnloadAfterResponse}
               />
             </div>
-            <Button onClick={saveSettings} disabled={isLoading}>
-              {isLoading ? t('common.saving') : t('common.save')}
+            <div className="flex items-center justify-between pt-2 border-t">
+              <div className="space-y-0.5">
+                <Label>{t('settings.verboseStats')}</Label>
+                <p className="text-sm text-muted-foreground">
+                  {t('settings.verboseStatsDesc')}
+                </p>
+              </div>
+              <Switch
+                checked={verboseStats}
+                onCheckedChange={setVerboseStats}
+              />
+            </div>
+          </CardContent>
+        </Card>
+        </div>
+
+        <div className="space-y-5">
+        {/* Health Status */}
+        <Card className="border-border/70 bg-card/82">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Server className="h-5 w-5" />
+              {t('settings.systemStatus')}
+            </CardTitle>
+            <CardDescription>{t('settings.systemStatusDesc')}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between py-2">
+              <div className="flex items-center gap-3">
+                <Database className="h-5 w-5 text-muted-foreground" />
+                <div>
+                  <p className="font-medium">{t('settings.ollamaService')}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {health?.ollama?.version ? `${t('settings.version')}: ${health.ollama.version}` : t('settings.notConnected')}
+                  </p>
+                </div>
+              </div>
+              <Badge variant={isOllamaHealthy ? 'default' : 'destructive'}>
+                {isOllamaHealthy ? (
+                  <Check className="h-3 w-3 mr-1" />
+                ) : (
+                  <X className="h-3 w-3 mr-1" />
+                )}
+                {isOllamaHealthy ? t('settings.healthy') : t('settings.unhealthy')}
+              </Badge>
+            </div>
+            <div className="flex items-center justify-between py-2">
+              <div className="flex items-center gap-3">
+                <Globe className="h-5 w-5 text-muted-foreground" />
+                <div>
+                  <p className="font-medium">{t('settings.backendApi')}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {t('settings.connectedTo', { endpoint: 'localhost:8000' })}
+                  </p>
+                </div>
+              </div>
+              <Badge variant="default">
+                <Check className="h-3 w-3 mr-1" />
+                {t('settings.healthy')}
+              </Badge>
+            </div>
+            <div className="flex items-center justify-between py-2">
+              <div className="flex items-center gap-3">
+                <Brain className="h-5 w-5 text-muted-foreground" />
+                <div>
+                  <p className="font-medium">{t('settings.memoryService')}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {memoryStatus?.enabled
+                      ? t('settings.embeddingActive', {
+                          model: memoryStatus.embedding_model || t('settings.unknownValue'),
+                        })
+                      : memoryStatus?.reason === 'configured_embedding_model_not_found'
+                        ? t('settings.embeddingConfiguredMissing', {
+                            model: memoryStatus.configured_embedding_model || t('settings.unknownValue'),
+                          })
+                        : memoryStatus?.reason === 'no_embedding_model'
+                          ? t('settings.embeddingAutoDisabled')
+                          : t('common.disabled')}
+                  </p>
+                </div>
+              </div>
+              <Badge variant={memoryStatus?.enabled ? 'default' : 'secondary'}>
+                {memoryStatus?.enabled ? (
+                  <Check className="h-3 w-3 mr-1" />
+                ) : (
+                  <X className="h-3 w-3 mr-1" />
+                )}
+                {memoryStatus?.enabled ? t('common.enabled') : t('common.disabled')}
+              </Badge>
+            </div>
+            <Button variant="outline" className="w-full" onClick={checkHealth}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              {t('settings.refreshStatus')}
             </Button>
           </CardContent>
         </Card>
 
         {/* Language & Appearance */}
-        <Card>
+        <Card className="border-border/70 bg-card/82">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Languages className="h-5 w-5" />
@@ -830,7 +933,7 @@ export function Settings() {
         </Card>
 
         {/* About */}
-        <Card>
+        <Card className="border-border/70 bg-card/82">
           <CardHeader>
             <CardTitle>{t('settings.about')}</CardTitle>
           </CardHeader>
@@ -849,6 +952,7 @@ export function Settings() {
             </div>
           </CardContent>
         </Card>
+        </div>
       </div>
     </div>
   );

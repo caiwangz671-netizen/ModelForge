@@ -96,6 +96,8 @@ export interface ChatAttachment {
   text?: string;
   data?: string;
   size?: number;
+  storage_id?: string;
+  url?: string;
 }
 
 export type ToolCallType = 'web_search' | 'browser' | 'python' | 'calculator' | 'terminal';
@@ -111,6 +113,15 @@ export interface ToolCall {
   completed_at?: string;
 }
 
+export interface UsageStats {
+  total_duration?: number;      // nanoseconds
+  load_duration?: number;       // nanoseconds
+  prompt_eval_count?: number;   // tokens
+  prompt_eval_duration?: number; // nanoseconds
+  eval_count?: number;          // tokens
+  eval_duration?: number;       // nanoseconds
+}
+
 export interface Message {
   id?: string;
   role: 'system' | 'user' | 'assistant';
@@ -120,6 +131,7 @@ export interface Message {
   tool_calls?: ToolCall[];
   rag_references?: RagReference[];
   created_at?: number;
+  usage_stats?: UsageStats;
 }
 
 export interface Conversation {

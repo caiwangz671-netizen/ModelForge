@@ -5,6 +5,7 @@ import { useChatStore } from '@/store/chatStore';
 import { useDownloadStore } from '@/store/downloadStore';
 import { computerUseApi, systemApi } from '@/services/api';
 import type { HardwareInfo } from '@/services/api';
+import type { ComputerUseSessionListItem } from '@/types/computerUse';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -25,7 +26,9 @@ import {
   Zap,
   FileSearch,
   ShieldAlert,
+  ArrowUpRight,
 } from 'lucide-react';
+import { readLastPrimaryPath } from '@/lib/pageMeta';
 
 type SystemHealthPayload = {
   status?: string;
@@ -75,6 +78,7 @@ export function Home() {
   const [health, setHealth] = useState<SystemHealthPayload | null>(null);
   const [hardware, setHardware] = useState<HardwareInfo | null>(null);
   const [computerUseStatus, setComputerUseStatus] = useState<ComputerUseStatusPayload | null>(null);
+  const [computerSessions, setComputerSessions] = useState<ComputerUseSessionListItem[]>([]);
   const [lastRefreshAt, setLastRefreshAt] = useState<number | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const refreshInFlightRef = useRef(false);
@@ -90,7 +94,7 @@ export function Home() {
         systemApi.health(),
         systemApi.hardware(),
       ]);
-      const computerUseResult = await Promise.allSettled([computerUseApi.status()]);
+      const computerUseResult = await Promise.allSettled([computerUseApi.status(), computerUseApi.listSessions()]);
 
       if (healthResult.status === 'fulfilled') {
         setHealth(healthResult.value.data as SystemHealthPayload);
@@ -112,6 +116,12 @@ export function Home() {
         setComputerUseStatus(computerUseStatusResult.value.data as ComputerUseStatusPayload);
       } else {
         setComputerUseStatus(null);
+      }
+      const computerUseSessionsResult = computerUseResult[1];
+      if (computerUseSessionsResult.status === 'fulfilled') {
+        setComputerSessions(Array.isArray(computerUseSessionsResult.value.data) ? computerUseSessionsResult.value.data as ComputerUseSessionListItem[] : []);
+      } else {
+        setComputerSessions([]);
       }
 
       await Promise.allSettled([
@@ -142,6 +152,11 @@ export function Home() {
     () => [...conversations].sort((a, b) => b.updated_at - a.updated_at).slice(0, 5),
     [conversations],
   );
+  const activeComputerSession = useMemo(
+    () => computerSessions.find((session) => !['completed', 'failed', 'cancelled'].includes(session.status)),
+    [computerSessions],
+  );
+  const lastPrimaryPath = readLastPrimaryPath();
   const hasVisionToolModel = useMemo(
     () => models.some((model) => model.capabilities?.supports_tools && model.capabilities?.supports_vision),
     [models],
@@ -192,7 +207,7 @@ export function Home() {
       value: activeDownloads,
       detail: t('home.stats.activeDownloadsDetail', { count: completedDownloads }),
       icon: Download,
-      link: '/downloads',
+      link: '/models?tab=transfers',
     },
     {
       title: t('home.stats.systemLoad'),
@@ -222,7 +237,7 @@ export function Home() {
       title: t('home.quickActions.downloads.title'),
       description: t('home.quickActions.downloads.description'),
       icon: Download,
-      link: '/downloads',
+      link: '/models?tab=transfers',
     },
     {
       title: t('home.quickActions.settings.title'),
@@ -232,14 +247,97 @@ export function Home() {
     },
   ];
 
+  const recommendedAction = useMemo(() => {
+    if (!ollamaHealthy) {
+      return {
+        title: t('home.recommendedAction.fixOllamaTitle'),
+        description: t('home.recommendedAction.fixOllamaDescription'),
+        link: '/settings',
+      };
+    }
+    if (activeComputerSession) {
+      return {
+        title: t('home.recommendedAction.resumeComputerUseTitle'),
+        description: activeComputerSession.goal,
+        link: '/computer-use',
+      };
+    }
+    if (activeDownloads > 0) {
+      return {
+        title: t('home.recommendedAction.reviewTransfersTitle'),
+        description: t('home.recommendedAction.reviewTransfersDescription', { count: activeDownloads }),
+        link: '/models?tab=transfers',
+      };
+    }
+    if (recentConversations[0]) {
+      return {
+        title: t('home.recommendedAction.resumeChatTitle'),
+        description: recentConversations[0].title || t('chat.newConversation'),
+        link: '/chat',
+      };
+    }
+    if (models.length === 0) {
+      return {
+        title: t('home.recommendedAction.getFirstModelTitle'),
+        description: t('home.recommendedAction.getFirstModelDescription'),
+        link: '/models',
+      };
+    }
+    return {
+      title: t('home.recommendedAction.startChatTitle'),
+      description: t('home.recommendedAction.startChatDescription'),
+      link: '/chat',
+    };
+  }, [activeComputerSession, activeDownloads, models.length, ollamaHealthy, recentConversations, t]);
+
+  const continueCards = useMemo(() => {
+    const cards: Array<{ title: string; description: string; link: string }> = [];
+    if (lastPrimaryPath) {
+      const titleKeyMap: Record<string, string> = {
+        '/chat': 'nav.chat',
+        '/computer-use': 'nav.computerUse',
+        '/models': 'nav.models',
+      };
+      cards.push({
+        title: t('home.continueLastSurface'),
+        description: t(titleKeyMap[lastPrimaryPath] || 'nav.workspace'),
+        link: lastPrimaryPath,
+      });
+    }
+    if (recentConversations[0]) {
+      cards.push({
+        title: t('home.continueConversation'),
+        description: recentConversations[0].title || t('chat.newConversation'),
+        link: '/chat',
+      });
+    }
+    if (activeComputerSession) {
+      cards.push({
+        title: t('home.continueComputerUse'),
+        description: activeComputerSession.goal,
+        link: '/computer-use',
+      });
+    }
+    if (activeDownloads > 0) {
+      cards.push({
+        title: t('home.continueTransfers'),
+        description: t('home.recommendedAction.reviewTransfersDescription', { count: activeDownloads }),
+        link: '/models?tab=transfers',
+      });
+    }
+    return cards.slice(0, 4);
+  }, [activeComputerSession, activeDownloads, lastPrimaryPath, recentConversations, t]);
+
   return (
     <div className="space-y-5">
       <div className="rounded-2xl border bg-gradient-to-br from-blue-500/10 via-background to-emerald-500/10 p-5 md:p-6">
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
-            <h2 className="text-3xl font-bold tracking-tight">{t('home.title')}</h2>
-            <p className="mt-2 text-muted-foreground">
-              {t('home.subtitle')}
+        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+          {t('home.workspaceLabel')}
+        </div>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+              {t('home.workspaceDescription')}
             </p>
             <div className="mt-4 flex flex-wrap items-center gap-2">
               <Badge variant={statusVariant(backendHealthy)}>
@@ -265,6 +363,68 @@ export function Home() {
             {t('home.refreshData')}
           </Button>
         </div>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
+        <Card className="border-border/70 bg-card/82">
+          <CardHeader>
+            <CardTitle>{t('home.nextBestAction')}</CardTitle>
+            <CardDescription>{t('home.nextBestActionDescription')}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Link to={recommendedAction.link} className="block rounded-2xl border border-border/70 bg-background/60 p-4 transition-colors hover:bg-background/80">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="font-medium">{recommendedAction.title}</div>
+                  <div className="mt-1 text-sm text-muted-foreground">{recommendedAction.description}</div>
+                </div>
+                <ArrowUpRight className="mt-0.5 h-4 w-4 text-muted-foreground" />
+              </div>
+            </Link>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              {continueCards.map((card) => (
+                <Link key={`${card.title}-${card.link}`} to={card.link} className="rounded-2xl border border-border/70 bg-background/50 p-4 transition-colors hover:bg-background/80">
+                  <div className="text-sm font-medium">{card.title}</div>
+                  <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{card.description}</div>
+                </Link>
+              ))}
+              {continueCards.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-border/70 bg-background/30 p-4 text-sm text-muted-foreground">
+                  {t('home.continueNothing')}
+                </div>
+              ) : null}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-border/70 bg-card/82">
+          <CardHeader>
+            <CardTitle>{t('home.quickEntry')}</CardTitle>
+            <CardDescription>{t('home.quickEntryDescription')}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {quickActions.map((action) => {
+              const Icon = action.icon;
+              return (
+                <Link
+                  key={action.title}
+                  to={action.link}
+                  className="group flex items-start justify-between rounded-lg border p-3 transition-colors hover:bg-muted/50"
+                >
+                  <div className="pr-3">
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      <Icon className="h-4 w-4 text-muted-foreground" />
+                      {action.title}
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">{action.description}</p>
+                  </div>
+                  <ArrowRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+                </Link>
+              );
+            })}
+          </CardContent>
+        </Card>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -417,33 +577,6 @@ export function Home() {
         </Card>
 
         <div className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>{t('home.quickEntry')}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {quickActions.map((action) => {
-                const Icon = action.icon;
-                return (
-                  <Link
-                    key={action.title}
-                    to={action.link}
-                    className="group flex items-start justify-between rounded-lg border p-3 transition-colors hover:bg-muted/50"
-                  >
-                    <div className="pr-3">
-                      <div className="flex items-center gap-2 text-sm font-medium">
-                        <Icon className="h-4 w-4 text-muted-foreground" />
-                        {action.title}
-                      </div>
-                      <p className="mt-1 text-xs text-muted-foreground">{action.description}</p>
-                    </div>
-                    <ArrowRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-                  </Link>
-                );
-              })}
-            </CardContent>
-          </Card>
-
           <Card>
             <CardHeader>
               <CardTitle>{t('home.recentConversations')}</CardTitle>

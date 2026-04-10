@@ -362,8 +362,8 @@ export function useModelRecommendation(libraryModels: LibraryModel[], enabled = 
 
     useEffect(() => {
         if (!enabled) {
-            setLoading(false);
-            return;
+            const timer = setTimeout(() => setLoading(false), 0);
+            return () => clearTimeout(timer);
         }
         let cancelled = false;
 
@@ -383,10 +383,12 @@ export function useModelRecommendation(libraryModels: LibraryModel[], enabled = 
         if (!libraryModels.length) return;
         if (hardware) {
             const mem = computeAvailableMemory(hardware, t);
-            setMemoryLabel(mem.label);
+            const timer = setTimeout(() => setMemoryLabel(mem.label), 0);
+            return () => clearTimeout(timer);
         } else {
             const detected = detectBrowserHardware(t);
-            setMemoryLabel(detected.label);
+            const timer = setTimeout(() => setMemoryLabel(detected.label), 0);
+            return () => clearTimeout(timer);
         }
     }, [hardware, libraryModels.length, t]);
 
